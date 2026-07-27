@@ -2,7 +2,7 @@
 
 本文只覆盖应用容器。DMIT 的 DNS、证书、Nginx stream 和 Xray 443 切换必须使用 Task 128 单独的维护窗口 runbook，不能仅按本文直接改公网入口。
 
-截至 2026-07-27，公开 GHCR 的 digest `sha256:77f922014080e810e9852dc49ef0e71c40ed755eb8b817a934b76e6c2d394c19` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:8f4dcd22aba78185636f0902c6cdd0bd28080729a50ef5712a2e5ba88fbb7214` 与升级前冷快照保留用于整体回滚。空卷 migration、管理员 stdin 初始化/重置、私有模式门禁、Workshop 与 `.nbbackup` 往返、容器重建、主机重启和同盘冷快照整体恢复均已实际通过；DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端最终确认。
+截至 2026-07-27，公开 GHCR 的 digest `sha256:6ec29b03a086920e9259f18a4ed8403b7c188002c8d57d1f037a7fbad118c726` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:77f922014080e810e9852dc49ef0e71c40ed755eb8b817a934b76e6c2d394c19` 与冷快照 `/srv/neuro-book-site/snapshot-task128-pino-20260727T163249Z.tar` 保留用于整体回滚。stdout/持久 JSONL 对账、容器重建持久性、强制轮转、压缩文件读取和新旧 digest 往返均已实际通过；DNS、证书、Nginx stream 443 与 Xray 配置没有在本轮调整。
 
 ## 目录与权限
 
