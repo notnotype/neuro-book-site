@@ -15,7 +15,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 - `GET /api/health/live` 只证明进程可响应；`GET /api/health/ready` 检查数据库、待应用 migration、数据库/Workshop/Backup 目录读写。容量耗尽只返回 degraded + HTTP 200。
 - 生产镜像使用 Bun 1.3.14 构建、Node 24.13.0 trixie slim 运行；Compose 约束非 root UID 10001、只读根、tmpfs、768 MiB、仅 loopback 3100 与固定可信 bridge。
 - `bun run db:admin -- create|reset` 提供显式管理员密码维护；密码只从 stdin 读取，生产镜像内对应 `/app/dist/admin-password.mjs`，reset 会递增会话版本并注销旧会话。
-- DMIT 当前运行公开 GHCR digest `sha256:c32043c9bd1f6820ea3b9aa1380e057addbe17a41c7254d62ea62b449f8a793c`；上一 digest `sha256:6fa3ed4c9d0aa1e45c31b148230e3e6a019083c7455f2d5c86fd71001f5d0474` 已通过实际回滚演练，数据摘要在三次切换中保持一致。
+- DMIT 当前运行公开 GHCR digest `sha256:8f4dcd22aba78185636f0902c6cdd0bd28080729a50ef5712a2e5ba88fbb7214`；上一 digest `sha256:c32043c9bd1f6820ea3b9aa1380e057addbe17a41c7254d62ea62b449f8a793c` 保留用于回滚，更早的 `sha256:6fa3ed4c9d0aa1e45c31b148230e3e6a019083c7455f2d5c86fd71001f5d0474` 之前已完成实际回滚演练。
 - 条目状态 `published / unlisted / removed`；非 published 对公开面（列表/详情/版本/下载/评论）一律 404。
 - 包版本真相源是 zip 内 `nbook-package.json` 的 `version`，平台只校验严格递增；拒绝时直接提示应改为 N+1。
 - zip 原样落盘 `WORKSHOP_FILES_DIR`（默认 `./data/files`），布局 `<filesDir>/<itemId>/<version>.zip`；下载字节与上传一致（集成测试 sha256 对比证明）。

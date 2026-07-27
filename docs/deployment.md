@@ -2,7 +2,7 @@
 
 本文只覆盖应用容器。DMIT 的 DNS、证书、Nginx stream 和 Xray 443 切换必须使用 Task 128 单独的维护窗口 runbook，不能仅按本文直接改公网入口。
 
-截至 2026-07-27，公开 GHCR 的 digest `sha256:c32043c9bd1f6820ea3b9aa1380e057addbe17a41c7254d62ea62b449f8a793c` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:6fa3ed4c9d0aa1e45c31b148230e3e6a019083c7455f2d5c86fd71001f5d0474` 已完成实际回滚演练。空卷 migration、管理员 stdin 初始化、私有模式门禁、Workshop 与 `.nbbackup` 往返、容器重建、主机重启和同盘冷快照整体恢复均已实际通过；DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端最终确认。
+截至 2026-07-27，公开 GHCR 的 digest `sha256:8f4dcd22aba78185636f0902c6cdd0bd28080729a50ef5712a2e5ba88fbb7214` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:c32043c9bd1f6820ea3b9aa1380e057addbe17a41c7254d62ea62b449f8a793c` 保留用于回滚。空卷 migration、管理员 stdin 初始化/重置、私有模式门禁、Workshop 与 `.nbbackup` 往返、容器重建、主机重启和同盘冷快照整体恢复均已实际通过；DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端最终确认。
 
 ## 目录与权限
 
