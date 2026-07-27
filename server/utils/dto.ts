@@ -3,7 +3,8 @@ import {readBody} from "h3";
 import {z} from "zod";
 
 const UsernameSchema = z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_-]+$/);
-const InviteCodeSchema = z.string().trim().min(1, "注册需要邀请码");
+const RegistrationCodeSchema = z.string().trim().min(1, "注册需要注册码").max(100);
+const OptionalInviteCodeSchema = z.string().trim().max(100).optional();
 
 export const LoginRequestDtoSchema = z.object({
     username: UsernameSchema,
@@ -13,13 +14,15 @@ export const LoginRequestDtoSchema = z.object({
 export const RegisterRequestDtoSchema = z.object({
     username: UsernameSchema,
     password: z.string().min(8).max(200),
-    inviteCode: InviteCodeSchema,
+    registrationCode: RegistrationCodeSchema,
+    inviteCode: OptionalInviteCodeSchema,
 });
 
-// GitHub 补全注册（spec §5.2）：身份来自 session pendingOAuth，body 只补用户名与邀请码
+// GitHub 补全注册（spec §5.2）：身份来自 session pendingOAuth，body 补用户名、注册码与可选邀请码
 export const OAuthRegisterRequestDtoSchema = z.object({
     username: UsernameSchema,
-    inviteCode: InviteCodeSchema,
+    registrationCode: RegistrationCodeSchema,
+    inviteCode: OptionalInviteCodeSchema,
 });
 
 // 站外链接字段：空串 = 未填写；非空必须 http(s)（avatarUrl 进 <img src>，拦掉 javascript: 等危险 scheme）

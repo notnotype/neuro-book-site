@@ -1,7 +1,7 @@
 import type {H3Event} from "h3";
 import {createError, getRouterParam} from "h3";
-import type {CommentDto, InviteCodeDto, ItemAuthorDto, ItemVersionDto, ItemViewerStateDto, PageDto, ReportDto, WorkshopItemDto} from "../../shared/dto/workshop.dto";
-import type {Comment, InviteCode, ItemVersion, Report, User, WorkshopItem} from "../database/prisma";
+import type {CommentDto, ItemAuthorDto, ItemVersionDto, ItemViewerStateDto, PageDto, ReportDto, WorkshopItemDto} from "../../shared/dto/workshop.dto";
+import type {Comment, ItemVersion, Report, User, WorkshopItem} from "../database/prisma";
 import {Prisma, prisma} from "../database/prisma";
 import {requireCurrentUser} from "./auth";
 
@@ -86,20 +86,6 @@ export function toCommentDto(comment: Comment & {author: User}): CommentDto {
         content: comment.content,
         author: toItemAuthorDto(comment.author),
         createdAt: comment.createdAt.toISOString(),
-    };
-}
-
-/**
- * 邀请码实体（带使用者）→ DTO。
- */
-export function toInviteCodeDto(code: InviteCode & {usedBy: User | null}): InviteCodeDto {
-    return {
-        id: code.id,
-        code: code.code,
-        note: code.note,
-        usedBy: code.usedBy?.username ?? null,
-        usedAt: code.usedAt?.toISOString() ?? null,
-        createdAt: code.createdAt.toISOString(),
     };
 }
 

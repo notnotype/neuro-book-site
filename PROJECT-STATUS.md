@@ -2,14 +2,14 @@
 
 ## Summary
 
-NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 128 的代码生产化已完成：仓库硬切为 `neuro-book-site`，Workshop 有界流式上传、跨 Workshop/Backup 全站容量门禁、密文 `.nbbackup`、私有模式、live/ready、stdin 管理员创建/重置和非 root 只读容器合同均已落地。Windows typecheck/build 与 121 项既有测试通过，新增管理员 CLI 聚焦测试及生产门禁通过；公开 GitHub 仓库与匿名可拉取的 GHCR `linux/amd64` 镜像已建立。DMIT 已安装 Docker Engine/Compose，以固定 digest 在 `127.0.0.1:3100` 运行；空卷 migration、Secure Cookie、私有门禁、Workshop/Backup 往返、容器重建、主机重启和冷快照整体恢复均已验证。DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端确认及真实 NeuroBook 公网闭环；公开邀请 Gate 不在本任务内。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 128 的代码生产化已完成：仓库硬切为 `neuro-book-site`，Workshop 有界流式上传、跨 Workshop/Backup 全站容量门禁、密文 `.nbbackup`、私有模式、live/ready、stdin 管理员创建/重置和非 root 只读容器合同均已落地。管理员注册码与用户邀请码已拆分，支持不限/限次、过期、停用和双参数注册链接；生产私有模式仍关闭注册。Windows typecheck/build 与 123 项全量测试通过；公开 GitHub 仓库与匿名可拉取的 GHCR `linux/amd64` 镜像已建立。DMIT 已安装 Docker Engine/Compose，以固定 digest 在 `127.0.0.1:3100` 运行；空卷 migration、Secure Cookie、私有门禁、Workshop/Backup 往返、容器重建、主机重启和冷快照整体恢复均已验证。DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端确认及真实 NeuroBook 公网闭环；Public Invite Gate 不在本任务内。
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
 ## Product Facts
 
 - Nuxt 4 SPA + Nitro API；Prisma 7/libSQL SQLite；`nuxt-auth-utils` cookie session；zod DTO；`@notnotype/nb-ui` 固定公开 Git commit，不依赖 Bun link。
-- 生产 owner-only 私有模式服务端关闭注册和 GitHub OAuth，前端隐藏入口；开发模式仍保留邀请码注册与 OAuth 代码供后续独立 Gate 使用。
+- 管理员 `RegistrationCode` 负责注册准入，用户 `InviteCode` 只记录可选邀请归属；两类码支持不限/限次、过期和停用，注册页可从链接同时预填。生产 owner-only 私有模式服务端仍关闭注册和 GitHub OAuth，前端隐藏入口。
 - Backup 只接收 `NBOOKBK1` magic、`.nbbackup` 和 `application/vnd.neurobook.backup`；`sha256` 是密文字节摘要，`keyId` 只用于客户端选择密钥，站点无法解密。
 - 全站 Workshop + Backup 默认上限 6 GiB并保留 4 GiB 物理空间；两类上传共用串行容量门禁。Workshop 压缩包 20 MiB、解压 100 MiB、500 条目，并拒绝逃逸/重复路径和非法 manifest。
 - `GET /api/health/live` 只证明进程可响应；`GET /api/health/ready` 检查数据库、待应用 migration、数据库/Workshop/Backup 目录读写。容量耗尽只返回 degraded + HTTP 200。
@@ -40,11 +40,12 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 | nb-ui 深模块化跟进 | Done | 跟随 nb-ui 优化轮 3 的消费方收敛：`app/theme/themes.ts` 145 行全量复制 → re-export 垫片；`useTheme.ts` 67 行 → `createThemeStore({storageKey: "nb-workshop-theme"})` 8 行垫片；`uno.config.ts` safelist 改 `[...NB_UI_ICON_SAFELIST]`（来自 `@notnotype/nb-ui/uno`，顺带补上此前漏掉的 grip-vertical）。typecheck 绿；浏览器实测 :3003 图标渲染与调色板切 Dracula 持久化正常。 |
 | Passport 与 Backup（Task 112 A+B） | Done | 官方站点改造第一轮：Prisma 四表（PassportDeviceCode/PassportAuthorization/PassportToken/InstanceBackup）；设备码流三端点（`device/code`、`token` 状态机含 slow_down/轮换/重放撤链、`revoke`）+ /link 页三端点 + 授权管理三端点；`requireAccess(event, scope)` 统一守卫，items POST / versions POST / items PATCH / me/items GET 四端点 Bearer 化（`requireOwnedItem` 加可选 user 参数），admin/社交面不接受 Bearer；Backup 五端点（busboy 流式上传边写边算 sha256 + 交互事务配额 + rotate 只淘汰同 label auto + sendStream 下载带 `x-nb-sha256`），配额三 env（`NB_BACKUP_*`）；前端 /link 批准页、me.vue 四 tab（新增已连接实例 PassportAuthorizationPanel / 云备份 BackupPanel）、登录页 `?redirect=` 回跳、useWorkshopApi 扩展。时序常量 env 可覆写（`NB_PASSPORT_*`）供测试稳定时序。新增 `tests/passport-backup.integration.test.ts`（19 用例：设备码全状态机/轮换撤链/Bearer scope 面/备份往返配额 rotate/限流 429），全量 72 测试绿。未做浏览器验证。 |
 | 账号第二轮：GitHub OAuth + Profile + Admin 后台（Task 119） | Done | ① GitHub OAuth（spec §5.2 落地）：`PassportIdentity` 表 + `passwordHash` 转可空（null=OAuth 免密账号）；`/auth/github` 单路由三分支（已绑定登录[封禁拦截]/已登录绑定[头像顺手带入]/未登录进补全注册），决策抽 `resolveGitHubSignIn` 纯函数单测；pending 身份走 sealed session cookie（`setAuthSession` 改 replace 语义顺带清残留）；补全注册 `GET/POST /api/auth/register/oauth`（邀请码闸门保留，免设密码）+ `/register/github` 补全页（register.vue 移入 register/index.vue 防嵌套路由空白）；身份管理 `GET/DELETE /api/v1/passport/identities`（无密码禁解绑防失联）。② Profile：User 加 avatarUrl/bio/websiteUrl，`GET/PATCH /api/v1/me/profile`（avatarUrl 限 http(s) 防 javascript: 注入，成功刷新会话）；ItemAuthorDto/PublicUserDto/AuthUserDto 透出 avatarUrl；新 `UserAvatar.vue`（img 失败回落首字母色块）吃遍顶栏/卡片/详情/评论/作者页；me.vue 第 5 tab「账号设置」=`AccountSettingsPanel.vue`（资料表单/GitHub 绑定区/密码区）。③ 修改密码 `POST /api/v1/me/password`：验旧密或免密补设；sessionVersion+1 踢其他设备后重写当前会话保活。④ 防爆破（门 A 债消）：login 10 次/5min/IP+用户名、register（含 oauth）5 次/时/IP、改密 5 次/时/用户，额度 env 可覆写（`NB_LOGIN/REGISTER/PASSWORD_RATE_LIMIT`）。⑤ Admin 后台六 tab（概览/邀请码/举报/条目/用户/备份，新面板抽 `app/components/admin/`）：用户管理（搜索分页/封禁=disabled+sessionVersion+1 即时踢线且 Bearer 面同步拒/角色变更同样踢线重登/self-guard 防锁死）、站点统计 `admin/stats`、备份用量 `admin/backup-usage`+行明细+admin 删除、邀请码 note 字段+全量列表过滤。测试 72→94（`github-oauth.test.ts` 纯函数 7 用例 + `account-admin.integration.test.ts` 15 用例；旧文件补 `NB_REGISTER_RATE_LIMIT` 环境防限流误伤）。真实 GitHub 回调需浏览器验收（env `NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET`，回调地址 `/auth/github`）。 |
+| 注册码与邀请码分离（Task 119 follow-up） | Done | 管理员注册码负责准入，用户邀请码只记录可选归属；两类码支持不限/限次、过期、备注与停用。密码/OAuth 注册共用事务内 CAS 消费；旧一次性邀请码迁为不限次数注册码。`/admin` 支持签发/设置/复制链接，`/me` 增“邀请好友”，`/register` 可预填双参数。typecheck、build 与 123 项全量测试通过；未做浏览器验证，生产注册仍关闭。 |
 | 官方站生产化与部署（Task 128） | In Progress | 代码、公开仓库/GHCR、`arch` 隔离容器验证、DMIT loopback、DNS/证书和 Nginx stream 443 均已完成；固定 digest、容器/主机重启、冷快照恢复和镜像回滚已演练。待既有 Xray 客户端确认、真实 NeuroBook 闭环和 canary 发布。 |
 
 ## Known Follow-ups
 
-- **官方站点改造已实施（2026-07-22，neuro-book Task 112 + Task 119）**：Passport（设备码流 + token 轮换撤链 + requireAccess 守卫 + /link 页 + 授权管理 + GitHub OAuth 关联/登录/补全注册）与 Backup（busboy 流式上传 + 配额 rotate + 五端点 + 面板备份页 + admin 用量管理）均已落地，spec 真相源 `reference/passport/api-v1.md`。个人页 me.vue 五 tab（发布/收藏/已连接实例/云备份/账号设置）；admin 六 tab（概览/邀请码/举报/条目/用户/备份）。集成测试 94 项全绿。待浏览器验收（GitHub OAuth 需配置真实 OAuth App）。
+- **官方站点改造已实施（neuro-book Task 112 + Task 119）**：Passport、Backup、GitHub OAuth、Profile、管理员后台及注册码/邀请码分离均已落地，spec 真相源 `reference/passport/api-v1.md`。个人页六个分区（含“邀请好友”）；admin 六个分区（含“注册码”）。全量 123 项测试通过。待浏览器验收（GitHub OAuth 需配置真实 OAuth App）。
 - **Task 128 公网阶段待完成**：DNS、证书和 443 已接入，站点与 Xray 服务端探测通过；仍需用户确认全部既有 Xray 客户端，再启用 80 → HTTPS 跳转并进入真实 NeuroBook 闭环。HTTPS 稳定前不能把 NeuroBook 默认官方站地址改为 `https://nbook.notnotype.com`。DMIT 整盘损坏仍会同时丢失站点数据与同盘快照，这是 owner-only 私有内测明确接受的剩余风险。
 
 - Web 页面 UI 已建成（含后端补口 `GET /me/items`）。仍未定的语义问题：admin 恢复 removed 条目的目标状态（当前强制回 published，作者原 unlisted 意愿会丢失）、`GET /users/:username` 条目列表是否分页（前端当前直接铺）、`me/favorites` 是否以灰态展示已下架条目（当前直接过滤掉）。

@@ -5,10 +5,11 @@ import {consumeRateLimit, envRateLimit} from "../../../utils/rate-limit";
 import type {User} from "../../../database/prisma";
 import {Prisma, prisma} from "../../../database/prisma";
 import {clientIp, isGitHubOAuthEnabled} from "../../../utils/site-config";
+import {consumeAccessCodes} from "../../../utils/access-code";
 
 /**
- * GitHub 补全注册（spec §5.2）：身份取自 session pendingOAuth，body 补用户名 + 邀请码。
- * 事务内建免密账号（passwordHash 为空）+ PassportIdentity + 消费邀请码，三者同生共死；
+ * GitHub 补全注册（spec §5.2）：身份取自 session pendingOAuth，body 补用户名、注册码与可选邀请码。
+ * 事务内建免密账号（passwordHash 为空）+ PassportIdentity + 消费两类码，四者同生共死；
  * 成功写正式 session（replace 语义顺带清掉 pendingOAuth）。
  */
 export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
@@ -26,14 +27,6 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
     }
     const body = await validateBody(event, OAuthRegisterRequestDtoSchema);
 
-    // 预检查只为友好报错；真正的约束由事务内条件更新 + 唯一约束保证（对齐密码注册端点）
-    const inviteCode = await prisma.inviteCode.findUnique({where: {code: body.inviteCode}});
-    if (!inviteCode) {
-        throw createError({statusCode: 400, message: "邀请码无效"});
-    }
-    if (inviteCode.usedById !== null) {
-        throw createError({statusCode: 400, message: "邀请码已被使用"});
-    }
     const existingUser = await prisma.user.findUnique({
         where: {username: body.username},
         select: {id: true},
@@ -52,12 +45,15 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
     let user: User;
     try {
         user = await prisma.$transaction(async (tx) => {
+            const codeIds = await consumeAccessCodes(tx, body.registrationCode, body.inviteCode || undefined);
             const created = await tx.user.create({
                 data: {
                     username: body.username,
                     displayName: pending.displayName || body.username,
                     passwordHash: null,
                     avatarUrl: pending.avatarUrl,
+                    registrationCodeId: codeIds.registrationCodeId,
+                    inviteCodeId: codeIds.inviteCodeId,
                 },
             });
             await tx.passportIdentity.create({
@@ -68,14 +64,6 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
                     userId: created.id,
                 },
             });
-            // 条件更新：并发双请求用同一码时，后提交者匹配不到 usedById=null，count=0 → 回滚
-            const consumed = await tx.inviteCode.updateMany({
-                where: {id: inviteCode.id, usedById: null},
-                data: {usedById: created.id, usedAt: new Date()},
-            });
-            if (consumed.count === 0) {
-                throw createError({statusCode: 400, message: "邀请码已被使用"});
-            }
             return created;
         });
     } catch (error) {

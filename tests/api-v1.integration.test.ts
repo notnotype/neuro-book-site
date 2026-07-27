@@ -4,11 +4,12 @@ import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs";
 import {join, resolve} from "node:path";
 import {strToU8, unzipSync} from "fflate";
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
-import type {CommentDto, FavoriteStateDto, InviteCodeDto, ItemVersionDto, LikeStateDto, PackageFileContentDto, PackageFileListDto, PageDto, PublicUserDto, ReportDto, WorkshopItemDto, WorkshopMetaDto} from "../shared/dto/workshop.dto";
+import type {CommentDto, FavoriteStateDto, ItemVersionDto, LikeStateDto, PackageFileContentDto, PackageFileListDto, PageDto, PublicUserDto, ReportDto, WorkshopItemDto, WorkshopMetaDto} from "../shared/dto/workshop.dto";
+import type {RegistrationCodeDto} from "../shared/dto/access-code.dto";
 import {buildPackageZip, readDirAsZipEntries} from "./helpers/zip";
 
 // API v1 真实 HTTP 集成测试：build 产物起真实 server，走完整主体流程——
-// admin 签发邀请码 → 邀请码注册 → 登录 → 创建条目 → 上传 skill/profile zip 版本 →
+// admin 签发注册码 → 注册 → 登录 → 创建条目 → 上传 skill/profile zip 版本 →
 // 公开列表/详情/版本可见 → 下载字节一致 → 点赞/收藏/评论/举报 → unlisted/removed 公开面不可达。
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -103,7 +104,7 @@ const readerJar = new CookieJar();
 const skillSlug = "stop-slop-fork";
 const profileSlug = "mini-writer-pack";
 
-let inviteCodes: string[] = [];
+let registrationCodes: string[] = [];
 let skillItemId = 0;
 let skillZipV1 = new Uint8Array();
 let skillZipV2 = new Uint8Array();
@@ -180,48 +181,49 @@ describe("API v1 主体流程", () => {
         expect(meta.itemTypes).toEqual(["skill", "profile"]);
     });
 
-    it("admin 登录并签发邀请码", async () => {
+    it("admin 登录并签发不限次数注册码", async () => {
         const login = await api("/api/auth/login", {jar: adminJar, json: {username: "admin", password: "admin1234567890-test"}});
         expect(login.status).toBe(200);
 
-        const issued = await api("/api/v1/admin/invite-codes", {jar: adminJar, json: {count: 2}});
+        const issued = await api("/api/v1/admin/registration-codes", {jar: adminJar, json: {count: 1, maxUses: null, expiresAt: null}});
         expect(issued.status).toBe(200);
-        const codes = (await issued.json()) as InviteCodeDto[];
-        expect(codes).toHaveLength(2);
-        expect(codes[0]?.usedBy).toBeNull();
-        inviteCodes = codes.map((code) => code.code);
+        const codes = (await issued.json()) as RegistrationCodeDto[];
+        expect(codes).toHaveLength(1);
+        expect(codes[0]?.maxUses).toBeNull();
+        expect(codes[0]?.usedCount).toBe(0);
+        registrationCodes = codes.map((code) => code.code);
     });
 
-    it("普通用户无法签发邀请码", async () => {
-        const anonymous = await api("/api/v1/admin/invite-codes", {json: {count: 1}});
+    it("普通用户无法签发注册码", async () => {
+        const anonymous = await api("/api/v1/admin/registration-codes", {json: {count: 1}});
         expect(anonymous.status).toBe(401);
     });
 
-    it("无邀请码 / 无效邀请码注册被拒", async () => {
+    it("无注册码 / 无效注册码注册被拒", async () => {
         const missing = await api("/api/auth/register", {json: {username: "author1", password: "password123"}});
         expect(missing.status).toBe(400);
 
-        const bogus = await api("/api/auth/register", {json: {username: "author1", password: "password123", inviteCode: "nbw-bogus"}});
+        const bogus = await api("/api/auth/register", {json: {username: "author1", password: "password123", registrationCode: "nbr-bogus"}});
         expect(bogus.status).toBe(400);
-        expect(((await bogus.json()) as {message?: string}).message).toContain("邀请码无效");
+        expect(((await bogus.json()) as {message?: string}).message).toContain("注册码无效");
     });
 
-    it("有效邀请码注册成功且码作废", async () => {
+    it("同一不限次数注册码可注册多个账号", async () => {
         const register = await api("/api/auth/register", {
             jar: authorJar,
-            json: {username: "author1", password: "password123", inviteCode: inviteCodes[0]},
+            json: {username: "author1", password: "password123", registrationCode: registrationCodes[0]},
         });
         expect(register.status).toBe(200);
 
-        const reused = await api("/api/auth/register", {json: {username: "author2", password: "password123", inviteCode: inviteCodes[0]}});
-        expect(reused.status).toBe(400);
-        expect(((await reused.json()) as {message?: string}).message).toContain("邀请码已被使用");
-
         const reader = await api("/api/auth/register", {
             jar: readerJar,
-            json: {username: "reader1", password: "password123", inviteCode: inviteCodes[1]},
+            json: {username: "reader1", password: "password123", registrationCode: registrationCodes[0]},
         });
         expect(reader.status).toBe(200);
+
+        const listed = await api("/api/v1/admin/registration-codes", {jar: adminJar});
+        const page = (await listed.json()) as PageDto<RegistrationCodeDto>;
+        expect(page.items[0]?.usedCount).toBe(2);
     });
 
     it("未登录不能创建条目；登录作者创建 skill 条目；slug 重复被拒", async () => {
@@ -519,21 +521,21 @@ describe("API v1 主体流程", () => {
         expect((await api(`/api/v1/items/${skillSlug}`)).status).toBe(200);
     });
 
-    it("并发用同一邀请码注册：恰好一人成功，码不被双花", async () => {
-        const issued = await api("/api/v1/admin/invite-codes", {jar: adminJar, json: {count: 1}});
-        const [code] = ((await issued.json()) as InviteCodeDto[]).map((invite) => invite.code);
+    it("并发使用限次注册码：不会穿透 maxUses", async () => {
+        const issued = await api("/api/v1/admin/registration-codes", {jar: adminJar, json: {count: 1, maxUses: 1, expiresAt: null}});
+        const [code] = ((await issued.json()) as RegistrationCodeDto[]).map((item) => item.code);
 
         const [a, b] = await Promise.all([
-            api("/api/auth/register", {json: {username: "race-user-a", password: "password123", inviteCode: code}}),
-            api("/api/auth/register", {json: {username: "race-user-b", password: "password123", inviteCode: code}}),
+            api("/api/auth/register", {json: {username: "race-user-a", password: "password123", registrationCode: code}}),
+            api("/api/auth/register", {json: {username: "race-user-b", password: "password123", registrationCode: code}}),
         ]);
         const statuses = [a.status, b.status].sort();
         expect(statuses[0]).toBe(200);
-        expect(statuses[1]).toBe(400); // 输者：邀请码已被使用
+        expect(statuses[1]).toBe(400);
 
-        // 码已消费：第三次使用同码必拒
-        const third = await api("/api/auth/register", {json: {username: "race-user-c", password: "password123", inviteCode: code}});
+        const third = await api("/api/auth/register", {json: {username: "race-user-c", password: "password123", registrationCode: code}});
         expect(third.status).toBe(400);
+        expect(((await third.json()) as {message?: string}).message).toContain("使用次数已达上限");
     });
 
     it("并发上传同版本：恰好一个成功，下载字节与成功记录一致", async () => {

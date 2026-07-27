@@ -1,7 +1,6 @@
 import type {
     CommentDto,
     FavoriteStateDto,
-    InviteCodeDto,
     ItemVersionDto,
     LikeStateDto,
     PackageFileContentDto,
@@ -13,6 +12,7 @@ import type {
     WorkshopItemType,
     WorkshopMetaDto,
 } from "../../shared/dto/workshop.dto";
+import type {AccessCodeSettingsInput, InviteCodeDto, RegistrationCodeDto} from "../../shared/dto/access-code.dto";
 import type {AuthorizationDto, PassportIdentityDto, PendingDeviceDto} from "../../shared/dto/passport.dto";
 import type {BackupListDto} from "../../shared/dto/backup.dto";
 import type {AuthSessionDto, MeProfileDto, PendingOAuthDto} from "../../shared/dto/auth.dto";
@@ -226,21 +226,43 @@ export function useWorkshopApi() {
         return await $fetch<PendingOAuthDto>("/api/auth/register/oauth");
     }
 
-    /** GitHub 补全注册（用户名 + 邀请码），成功即登录。 */
-    async function completeOAuthRegister(input: {username: string; inviteCode: string}): Promise<AuthSessionDto> {
+    /** GitHub 补全注册（用户名 + 注册码 + 可选邀请码），成功即登录。 */
+    async function completeOAuthRegister(input: {username: string; registrationCode: string; inviteCode?: string}): Promise<AuthSessionDto> {
         return await $fetch<AuthSessionDto>("/api/auth/register/oauth", {method: "POST", body: input});
+    }
+
+    // ---- 邀请码自管理 ----
+
+    /** 当前用户创建的邀请码列表。 */
+    async function listMyInviteCodes(): Promise<InviteCodeDto[]> {
+        return await $fetch<InviteCodeDto[]>("/api/v1/me/invite-codes");
+    }
+
+    /** 当前用户创建一个邀请码。 */
+    async function createMyInviteCode(input: AccessCodeSettingsInput): Promise<InviteCodeDto> {
+        return await $fetch<InviteCodeDto>("/api/v1/me/invite-codes", {method: "POST", body: input});
+    }
+
+    /** 当前用户修改自己的邀请码。 */
+    async function updateMyInviteCode(id: number, input: Partial<AccessCodeSettingsInput> & {disabled?: boolean}): Promise<InviteCodeDto> {
+        return await $fetch<InviteCodeDto>(`/api/v1/me/invite-codes/${id}`, {method: "PATCH", body: input});
     }
 
     // ---- admin ----
 
-    /** 批量签发邀请码（note 为本批用途备注），返回码明文。 */
-    async function createInviteCodes(count: number, note = ""): Promise<InviteCodeDto[]> {
-        return await $fetch<InviteCodeDto[]>("/api/v1/admin/invite-codes", {method: "POST", body: {count, note}});
+    /** 批量签发注册码，返回完整设置与码值。 */
+    async function createRegistrationCodes(count: number, input: AccessCodeSettingsInput): Promise<RegistrationCodeDto[]> {
+        return await $fetch<RegistrationCodeDto[]>("/api/v1/admin/registration-codes", {method: "POST", body: {count, ...input}});
     }
 
-    /** 邀请码全量列表（按使用状态过滤）。 */
-    async function listInviteCodes(query: PageParams & {filter?: "all" | "used" | "unused"} = {}): Promise<PageDto<InviteCodeDto>> {
-        return await $fetch<PageDto<InviteCodeDto>>("/api/v1/admin/invite-codes", {query});
+    /** 管理员注册码全量分页列表。 */
+    async function listRegistrationCodes(query: PageParams = {}): Promise<PageDto<RegistrationCodeDto>> {
+        return await $fetch<PageDto<RegistrationCodeDto>>("/api/v1/admin/registration-codes", {query});
+    }
+
+    /** 修改注册码设置或停用状态。 */
+    async function updateRegistrationCode(id: number, input: Partial<AccessCodeSettingsInput> & {disabled?: boolean}): Promise<RegistrationCodeDto> {
+        return await $fetch<RegistrationCodeDto>(`/api/v1/admin/registration-codes/${id}`, {method: "PATCH", body: input});
     }
 
     /** 用户列表（用户名/昵称搜索 + 分页）。 */
@@ -354,7 +376,9 @@ export function useWorkshopApi() {
         addComment, deleteComment, report, myFavorites, myItems,
         getMyProfile, updateMyProfile, changePassword, listIdentities, unlinkIdentity,
         getPendingOAuth, completeOAuthRegister,
-        createInviteCodes, listInviteCodes, listReports, resolveReport, setItemStatus, setItemFeatured,
+        listMyInviteCodes, createMyInviteCode, updateMyInviteCode,
+        createRegistrationCodes, listRegistrationCodes, updateRegistrationCode,
+        listReports, resolveReport, setItemStatus, setItemFeatured,
         listAdminUsers, setUserStatus, setUserRole, getAdminStats, getBackupUsage, listAdminBackups, adminDeleteBackup,
         getPendingDevice, approveDevice, denyDevice,
         listAuthorizations, renameAuthorization, revokeAuthorization,

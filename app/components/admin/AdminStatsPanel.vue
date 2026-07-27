@@ -33,7 +33,7 @@ const cards = [
     {key: "downloadTotal", label: "总下载量", icon: "i-lucide-download", value: (s: AdminStatsDto) => String(s.downloadTotal)},
     {key: "backup", label: "云备份", icon: "i-lucide-cloud-upload", value: (s: AdminStatsDto) => `${s.backupCount} 份 · ${formatBytes(s.backupBytes)}`},
     {key: "reportPending", label: "待处理举报", icon: "i-lucide-flag", value: (s: AdminStatsDto) => String(s.reportPending)},
-    {key: "inviteUnused", label: "未用邀请码", icon: "i-lucide-ticket", value: (s: AdminStatsDto) => String(s.inviteUnused)},
+    {key: "registrationCodeTotal", label: "注册码", icon: "i-lucide-ticket", value: (s: AdminStatsDto) => String(s.registrationCodeTotal)},
 ];
 </script>
 

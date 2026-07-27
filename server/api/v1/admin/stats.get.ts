@@ -9,14 +9,14 @@ export default defineEventHandler(async (event): Promise<AdminStatsDto> => {
     await requireAdmin(event);
     const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    const [userTotal, userRecent30d, itemsByStatus, downloadAgg, backupAgg, reportPending, inviteUnused] = await Promise.all([
+    const [userTotal, userRecent30d, itemsByStatus, downloadAgg, backupAgg, reportPending, registrationCodeTotal] = await Promise.all([
         prisma.user.count(),
         prisma.user.count({where: {createdAt: {gte: since30d}}}),
         prisma.workshopItem.groupBy({by: ["status"], _count: {_all: true}}),
         prisma.workshopItem.aggregate({_sum: {downloadCount: true}}),
         prisma.instanceBackup.aggregate({_count: {_all: true}, _sum: {fileSize: true}}),
         prisma.report.count({where: {resolvedAt: null}}),
-        prisma.inviteCode.count({where: {usedById: null}}),
+        prisma.registrationCode.count(),
     ]);
 
     const statusCount = (status: "published" | "unlisted" | "removed"): number =>
@@ -32,6 +32,6 @@ export default defineEventHandler(async (event): Promise<AdminStatsDto> => {
         backupCount: backupAgg._count._all,
         backupBytes: backupAgg._sum.fileSize ?? 0,
         reportPending,
-        inviteUnused,
+        registrationCodeTotal,
     };
 });

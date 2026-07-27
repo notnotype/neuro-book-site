@@ -8,7 +8,7 @@ import {clientIp} from "../../utils/site-config";
 
 /**
  * 登录并写入 session。防爆破：按 IP+用户名限频（spec §4；纯 IP 会误伤共享出口，键上用户名后
- * 单账号爆破被压死，撒网式换名爆破由邀请码注册闸门兜底）。额度 env 可覆写供测试。
+ * 单账号爆破被压死，撒网式换名爆破由注册码准入门禁兜底）。额度 env 可覆写供测试。
  * OAuth 免密账号（passwordHash 为空）与封禁账号统一走「用户名或密码错误」，不泄露账号存在性。
  */
 export default defineEventHandler(async (event): Promise<AuthSessionDto> => {

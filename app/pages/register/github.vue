@@ -4,7 +4,7 @@ import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {PendingOAuthDto} from "../../../shared/dto/auth.dto";
 
 // GitHub 补全注册页：/auth/github 未绑定且未登录时跳来。
-// pending 身份在 sealed session cookie 里，这里只补用户名 + 邀请码（免设密码）。
+// pending 身份在 sealed session cookie 里，这里补用户名、注册码与可选邀请码（免设密码）。
 definePageMeta({layout: false});
 useHead({title: "完成 GitHub 注册"});
 
@@ -18,6 +18,7 @@ const loading = ref(true);
 const missing = ref(false); // 无 pending（直接访问 / 会话过期）
 
 const username = ref("");
+const registrationCode = ref("");
 const inviteCode = ref("");
 const busy = ref(false);
 const errorMsg = ref("");
@@ -30,6 +31,8 @@ onMounted(async () => {
     try {
         pending.value = await api.getPendingOAuth();
         username.value = pending.value.suggestedUsername;
+        registrationCode.value = sessionStorage.getItem("nbook-registration-code") ?? "";
+        inviteCode.value = sessionStorage.getItem("nbook-invite-code") ?? "";
     } catch {
         missing.value = true;
     } finally {
@@ -41,7 +44,13 @@ async function submit(): Promise<void> {
     busy.value = true;
     errorMsg.value = "";
     try {
-        await api.completeOAuthRegister({username: username.value, inviteCode: inviteCode.value.trim()});
+        await api.completeOAuthRegister({
+            username: username.value,
+            registrationCode: registrationCode.value.trim(),
+            ...(inviteCode.value.trim() ? {inviteCode: inviteCode.value.trim()} : {}),
+        });
+        sessionStorage.removeItem("nbook-registration-code");
+        sessionStorage.removeItem("nbook-invite-code");
         await refresh();
         notification.success("注册成功，欢迎加入");
         await navigateTo("/");
@@ -79,7 +88,8 @@ async function submit(): Promise<void> {
                     </div>
                 </div>
                 <FormField label="用户名" description="3-32 个英文、数字、下划线或连字符，注册后不可修改。" required><FormInput v-model="username" name="username" autocomplete="username" /></FormField>
-                <FormField label="邀请码" description="注册需要管理员签发的邀请码。" required><FormInput v-model="inviteCode" name="inviteCode" autocomplete="off" /></FormField>
+                <FormField label="注册码" required><FormInput v-model="registrationCode" name="registrationCode" autocomplete="off" /></FormField>
+                <FormField label="邀请码（可选）"><FormInput v-model="inviteCode" name="inviteCode" autocomplete="off" /></FormField>
                 <p v-if="errorMsg" class="text-sm text-[var(--status-danger)]">{{ errorMsg }}</p>
                 <Button type="submit" block :loading="busy">创建账号</Button>
                 <NuxtLink to="/login" class="block text-center text-sm text-[var(--accent-text)] hover:underline">改用其他方式登录</NuxtLink>

@@ -32,8 +32,12 @@ model User {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @default(now()) @updatedAt
 
-  inviteCodesCreated     InviteCode[]            @relation("InviteCodeCreated")
-  inviteCodesUsed        InviteCode[]            @relation("InviteCodeUsed")
+  registrationCodesCreated RegistrationCode[]       @relation("RegistrationCodeCreated")
+  registrationCodeId       Int?
+  registrationCode         RegistrationCode?        @relation("RegistrationCodeUses", fields: [registrationCodeId], references: [id], onDelete: SetNull)
+  inviteCodesCreated       InviteCode[]              @relation("InviteCodeCreated")
+  inviteCodeId             Int?
+  inviteCode               InviteCode?               @relation("InviteCodeUses", fields: [inviteCodeId], references: [id], onDelete: SetNull)
   items                  WorkshopItem[]
   likes                  Like[]
   favorites              Favorite[]
@@ -45,6 +49,8 @@ model User {
 
   @@index([role, status])
   @@index([updatedAt])
+  @@index([registrationCodeId])
+  @@index([inviteCodeId])
 }
 
 // ---------- Workshop ----------
@@ -62,20 +68,44 @@ enum WorkshopItemStatus {
   removed
 }
 
-// 邀请码：注册消费后作废（一码一人）
-model InviteCode {
+// 注册码：admin 创建的注册准入凭据；maxUses 为空表示不限次数。
+model RegistrationCode {
   id          Int       @id @default(autoincrement())
   code        String    @unique
-  note        String    @default("") // admin 备注用途（发给谁 / 什么活动），仅 admin 可见
+  note        String    @default("") // 管理员备注，仅 admin 可见
+  maxUses     Int? // 为空表示不限次数
+  usedCount   Int       @default(0)
+  lastUsedAt  DateTime? // 为空表示尚未使用
+  expiresAt   DateTime? // 为空表示永不过期
+  disabledAt  DateTime? // 为空表示未停用
   createdById Int
-  usedById    Int? // 为空表示尚未被消费
-  usedAt      DateTime? // 为空表示尚未被消费
   createdAt   DateTime  @default(now())
 
-  createdBy User  @relation("InviteCodeCreated", fields: [createdById], references: [id])
-  usedBy    User? @relation("InviteCodeUsed", fields: [usedById], references: [id])
+  createdBy User   @relation("RegistrationCodeCreated", fields: [createdById], references: [id])
+  users     User[] @relation("RegistrationCodeUses")
 
   @@index([createdById])
+  @@index([disabledAt, expiresAt])
+}
+
+// 邀请码：用户创建的可选邀请归属凭据，不替代管理员注册码。
+model InviteCode {
+  id         Int       @id @default(autoincrement())
+  code       String    @unique
+  note       String    @default("") // 创建者自己的用途备注
+  maxUses    Int? // 为空表示不限次数
+  usedCount  Int       @default(0)
+  lastUsedAt DateTime? // 为空表示尚未使用
+  expiresAt  DateTime? // 为空表示永不过期
+  disabledAt DateTime? // 为空表示未停用
+  ownerId    Int
+  createdAt  DateTime  @default(now())
+
+  owner User   @relation("InviteCodeCreated", fields: [ownerId], references: [id])
+  users User[] @relation("InviteCodeUses")
+
+  @@index([ownerId, createdAt])
+  @@index([disabledAt, expiresAt])
 }
 
 // 工坊条目：一个可被浏览 / 下载的 skill 或 profile 发布单元

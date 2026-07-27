@@ -4,8 +4,8 @@ import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {SegmentedControlOption, SegmentedControlValue} from "@notnotype/nb-ui/components";
 import type {ReportDto, WorkshopItemDto} from "../../shared/dto/workshop.dto";
 
-// admin 控制台六分区：概览 / 邀请码 / 举报 / 条目 / 用户 / 备份。
-// 邀请码、用户、备份、概览抽在 app/components/admin/ 下；举报与条目管理逻辑留在本页。
+// admin 控制台六分区：概览 / 注册码 / 举报 / 条目 / 用户 / 备份。
+// 注册码、用户、备份、概览抽在 app/components/admin/ 下；举报与条目管理逻辑留在本页。
 definePageMeta({middleware: "auth"});
 useHead({title: "管理控制台"});
 
@@ -15,11 +15,11 @@ const notification = useNotification();
 
 const isAdmin = computed(() => session.value.user?.role === "admin");
 
-type AdminTab = "overview" | "invites" | "reports" | "items" | "users" | "backups";
+type AdminTab = "overview" | "registrationCodes" | "reports" | "items" | "users" | "backups";
 const tab = ref<AdminTab>("overview");
 const tabOptions: SegmentedControlOption[] = [
     {label: "概览", value: "overview"},
-    {label: "邀请码", value: "invites"},
+    {label: "注册码", value: "registrationCodes"},
     {label: "举报", value: "reports"},
     {label: "条目管理", value: "items"},
     {label: "用户", value: "users"},
@@ -157,8 +157,8 @@ watch(tab, (current) => {
         <!-- 概览（站点统计） -->
         <AdminStatsPanel v-if="tab === 'overview'" />
 
-        <!-- 邀请码（签发 + 全量列表） -->
-        <AdminInvitesPanel v-else-if="tab === 'invites'" />
+        <!-- 注册码（签发 + 设置 + 分享） -->
+        <AdminRegistrationCodesPanel v-else-if="tab === 'registrationCodes'" />
 
         <!-- 用户管理 -->
         <AdminUsersPanel v-else-if="tab === 'users'" />

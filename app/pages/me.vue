@@ -4,7 +4,7 @@ import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {SegmentedControlOption, SegmentedControlValue} from "@notnotype/nb-ui/components";
 import type {PageDto, WorkshopItemDto} from "../../shared/dto/workshop.dto";
 
-// 个人页：我的发布（含 unlisted，可管理）/ 我的收藏（可即时取消）/ 实例 / 备份 / 账号设置。
+// 个人页：我的发布（含 unlisted，可管理）/ 我的收藏 / 实例 / 备份 / 邀请好友 / 账号设置。
 definePageMeta({middleware: "auth"});
 useHead({title: "个人中心"});
 
@@ -14,8 +14,8 @@ const route = useRoute();
 
 const PAGE_SIZE = 24;
 
-type MeTab = "published" | "favorites" | "instances" | "backups" | "account";
-const TAB_VALUES: MeTab[] = ["published", "favorites", "instances", "backups", "account"];
+type MeTab = "published" | "favorites" | "instances" | "backups" | "invites" | "account";
+const TAB_VALUES: MeTab[] = ["published", "favorites", "instances", "backups", "invites", "account"];
 
 // GitHub 回调会带 ?tab=account 直达账号设置
 const initialTab = TAB_VALUES.includes(route.query.tab as MeTab) ? route.query.tab as MeTab : "published";
@@ -25,6 +25,7 @@ const tabOptions: SegmentedControlOption[] = [
     {label: "我的收藏", value: "favorites"},
     {label: "已连接实例", value: "instances"},
     {label: "云备份", value: "backups"},
+    {label: "邀请好友", value: "invites"},
     {label: "账号设置", value: "account"},
 ];
 
@@ -156,6 +157,9 @@ watch(tab, (current) => {
 
         <!-- 云备份管理 -->
         <BackupPanel v-else-if="tab === 'backups'" />
+
+        <!-- 邀请码与注册链接 -->
+        <InviteCodePanel v-else-if="tab === 'invites'" />
 
         <!-- 账号设置（资料 / GitHub 绑定 / 密码） -->
         <AccountSettingsPanel v-else-if="tab === 'account'" />

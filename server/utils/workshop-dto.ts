@@ -89,12 +89,6 @@ export const CreateReportRequestSchema = z.object({
     reason: z.string().trim().min(1, "举报理由不能为空").max(2000),
 });
 
-// admin 批量签发邀请码；note 为本批用途备注（发给谁 / 什么活动）
-export const CreateInviteCodesRequestSchema = z.object({
-    count: z.number().int().min(1).max(100).default(1),
-    note: z.string().trim().max(120).default(""),
-});
-
 // admin 下架 / 恢复条目
 export const AdminItemStatusRequestSchema = z.object({
     status: z.enum(["published", "removed"], "admin 只能设置 published 或 removed"),

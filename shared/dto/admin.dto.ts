@@ -26,7 +26,7 @@ export type AdminStatsDto = {
     backupCount: number;
     backupBytes: number; // 云备份总占用
     reportPending: number; // 未处理举报
-    inviteUnused: number; // 未使用邀请码
+    registrationCodeTotal: number; // 管理员签发的注册码总数
 };
 
 // 各账号云备份用量聚合行

@@ -21,7 +21,7 @@ Phase 1 后端已建成（见 `PROJECT-STATUS.md` 与 neuro-book `docs/tasks/88-
 
 ## 发现的既有缺口（本轮修复）
 
-- `app/pages/register.vue` 未发送 `inviteCode`，后端已把邀请码设为必填 → 现有注册页对新后端**已失效**。本轮补邀请码字段。
+- 2026-07-05 当时的缺口：`app/pages/register.vue` 未发送必填邀请码，注册页对当时后端失效；当轮已修复。2026-07-27 起该旧合同由“必填注册码 + 可选邀请码”取代，见文末 follow-up。
 
 ## 应用壳与布局
 
@@ -33,8 +33,8 @@ Phase 1 后端已建成（见 `PROJECT-STATUS.md` 与 neuro-book `docs/tasks/88-
 ## useWorkshopApi 面（typed，返回 shared DTO）
 
 读：`listItems(query)` `getItem(slug)` `getVersions(slug)` `getComments(slug,page)` `downloadHref(slug,version?)` `getUser(username)` `getMeta()`。
-写（登录）：`createItem(body)` `uploadVersion(slug,{file,changelog})` `updateItem(slug,patch)` `like/unlike(slug)` `favorite/unfavorite(slug)` `addComment(slug,content)` `deleteComment(id)` `report(slug,reason)` `myFavorites(page)`。
-admin：`createInviteCodes(count)` `listReports(page)` `resolveReport(id)` `setItemStatus(id,status)`。
+写（登录）：`createItem(body)` `uploadVersion(slug,{file,changelog})` `updateItem(slug,patch)` `like/unlike(slug)` `favorite/unfavorite(slug)` `addComment(slug,content)` `deleteComment(id)` `report(slug,reason)` `myFavorites(page)`，以及 `list/create/updateMyInviteCode` 管理本人邀请码。
+admin：`create/list/updateRegistrationCode` 管理注册码，另有 `listReports(page)` `resolveReport(id)` `setItemStatus(id,status)`。
 
 均以 `shared/dto/workshop.dto.ts` 类型标注入参出参；上传走 `FormData`（file part 必带 filename）。
 
@@ -136,3 +136,13 @@ admin：`createInviteCodes(count)` `listReports(page)` `resolveReport(id)` `setI
     - **关键避坑（本轮最有复用价值的发现）**：Nuxt 默认 `generateRouteKey` = 插值路径（`node_modules/nuxt/dist/pages/runtime/utils.js`），`/items/a → /items/b` 是**整页重挂载而非 vue-router 式组件复用**，且退场页面经 `RouteProvider` 注入的 route 被冻结（getter 回落 previousRoute）。review 中 4 个「导航离开触发多余请求 / 跨条目状态泄漏」类候选全部因此被推翻，代码里按组件复用心智写的 slug watcher 也因此是永不触发的死代码。以后在本仓写 param 页面：重挂载语义下不需要 watch params，也不会有跨条目复用泄漏。
     - **刻意不修**（记录避免重议）：预览接口 `requirePublishedItem` 的 DTO include 超取（SQLite 小数据代价可忽略）、预览内容客户端 memo、版本 Tab 逐版下载反馈、usePagedList 抽取（4 处分页复制是既有全仓模式，属独立重构）、zip bomb / 头部 size 造假防护（既有安全债，按门 A/B 回补）。
     - 验证：typecheck 0 error；build 通过（Σ 8.45 MB / 2.6 MB gzip）；**重新 build 后**复跑测试 53 全绿（集成测试 spawn `.output` 产物，先 build 才真正执行到新 helper 路径——预览往返 / 404 / 400 语义均通过）。**未做浏览器验证**。
+
+## 2026-07-27 注册码与邀请码改造
+
+- 注册准入与邀请归属拆成两个概念：管理员在 `/admin` 的“注册码”分区签发注册码；普通用户在 `/me` 的“邀请好友”分区创建邀请码。邀请码可选，不能绕过必填注册码。
+- 两类码都支持不限次数、有限次数、过期时间、备注和停用/启用。管理员可批量签发注册码；用户只能查看和修改自己创建的邀请码。
+- 管理员可复制只带注册码的 `/register?registrationCode=...` 链接。用户可复制带邀请码的链接，并可手动附加注册码形成 `/register?registrationCode=...&inviteCode=...`。
+- 注册页从 URL 预填两类码；GitHub OAuth 往返通过当前标签页的 `sessionStorage` 暂存两类码。密码注册与 OAuth 补全注册共用服务端原子消费合同。
+- 数据库将旧的一次性管理员邀请码迁为不限次数注册码，并保留已有注册归属；新的用户邀请码表从空表开始。
+- 生产私有模式继续关闭注册与 GitHub OAuth。本轮只准备能力，不自动通过 Public Invite Gate，也不对外发码。
+- 验证：注册码不限次数复用、有限次数并发门禁、过期/停用、邀请码归属/越权和迁移均由 HTTP 集成测试覆盖；未自动执行浏览器验证。

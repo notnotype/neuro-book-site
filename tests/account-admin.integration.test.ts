@@ -6,11 +6,12 @@ import {afterAll, beforeAll, describe, expect, it} from "vitest";
 import type {AdminBackupDto, AdminBackupUsageDto, AdminStatsDto, AdminUserDto} from "../shared/dto/admin.dto";
 import type {MeProfileDto} from "../shared/dto/auth.dto";
 import type {DeviceCodeDto, PassportIdentityDto, TokenGrantDto} from "../shared/dto/passport.dto";
-import type {InviteCodeDto, PageDto, PublicUserDto, WorkshopItemDto} from "../shared/dto/workshop.dto";
+import type {PageDto, PublicUserDto, WorkshopItemDto} from "../shared/dto/workshop.dto";
+import type {InviteCodeDto, RegistrationCodeDto} from "../shared/dto/access-code.dto";
 
 // 账号第二轮 + admin 后台真实 HTTP 集成测试：build 产物起真实 server，覆盖
 // OAuth 补全注册守卫 / 身份绑定解绑（免密守卫）/ profile / 改密与踢线 / admin 用户管理与封禁 /
-// 统计 / 邀请码 note 列表 / admin 备份用量与删除 / 登录限流 429（放最后）。
+// 统计 / 注册码 / 用户邀请码 / admin 备份用量与删除 / 登录限流 429（放最后）。
 // GitHub 真实回调无法在测试内走通（需上游交互），三分支决策由 tests/github-oauth.test.ts 单测覆盖，
 // 绑定态在这里直接写库构造（PassportIdentity 行），验证的是绑定之后的管理面契约。
 
@@ -119,6 +120,7 @@ const u2Jar = new CookieJar(); // au2：封禁与 Bearer 用例
 const u3Jar = new CookieJar(); // au3：免密账号（模拟 OAuth 注册形态）
 
 let u2Grant: TokenGrantDto | null = null; // au2 的设备码授权（封禁 Bearer 面用）
+let registrationCode = "";
 
 beforeAll(async () => {
     const serverEntry = join(repoRoot, ".output", "server", "index.mjs");
@@ -189,45 +191,81 @@ afterAll(async () => {
 });
 
 describe("账号第二轮：OAuth 注册面与身份管理", () => {
-    it("准备：admin 登录、签发带 note 邀请码、注册三个用户", async () => {
+    it("准备：admin 登录、签发不限次数注册码、注册三个用户", async () => {
         const login = await api("/api/auth/login", {jar: adminJar, json: {username: "admin", password: "admin1234567890-test"}});
         expect(login.status).toBe(200);
 
-        const issued = await api("/api/v1/admin/invite-codes", {jar: adminJar, json: {count: 3, note: "账号测试批次"}});
+        const issued = await api("/api/v1/admin/registration-codes", {jar: adminJar, json: {count: 1, note: "账号测试批次", maxUses: null, expiresAt: null}});
         expect(issued.status).toBe(200);
-        const codes = ((await issued.json()) as InviteCodeDto[]).map((code) => code.code);
+        registrationCode = ((await issued.json()) as RegistrationCodeDto[])[0]!.code;
 
         for (const [index, jar] of [u1Jar, u2Jar, u3Jar].entries()) {
-            const register = await api("/api/auth/register", {jar, json: {username: `au${index + 1}`, password: "password123", inviteCode: codes[index]}});
+            const register = await api("/api/auth/register", {jar, json: {username: `au${index + 1}`, password: "password123", registrationCode}});
             expect(register.status).toBe(200);
         }
     });
 
-    it("邀请码列表：note 落库、used/unused 过滤", async () => {
-        const spare = await api("/api/v1/admin/invite-codes", {jar: adminJar, json: {count: 1, note: "备用"}});
+    it("注册码设置：限次、到期、停用和权限", async () => {
+        const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const spare = await api("/api/v1/admin/registration-codes", {jar: adminJar, json: {count: 1, note: "活动码", maxUses: 2, expiresAt: future}});
         expect(spare.status).toBe(200);
+        const created = ((await spare.json()) as RegistrationCodeDto[])[0]!;
+        expect(created.maxUses).toBe(2);
+        expect(created.expiresAt).toBe(future);
 
-        const unused = await api("/api/v1/admin/invite-codes?filter=unused", {jar: adminJar});
-        const unusedPage = (await unused.json()) as PageDto<InviteCodeDto>;
-        expect(unusedPage.total).toBe(1);
-        expect(unusedPage.items[0]!.note).toBe("备用");
-        expect(unusedPage.items[0]!.usedBy).toBeNull();
+        const listed = await api("/api/v1/admin/registration-codes", {jar: adminJar});
+        const page = (await listed.json()) as PageDto<RegistrationCodeDto>;
+        expect(page.total).toBe(2);
+        expect(page.items.find((code) => code.id === created.id)?.note).toBe("活动码");
 
-        const used = await api("/api/v1/admin/invite-codes?filter=used", {jar: adminJar});
-        const usedPage = (await used.json()) as PageDto<InviteCodeDto>;
-        expect(usedPage.total).toBe(3);
-        expect(usedPage.items.every((code) => code.note === "账号测试批次" && code.usedBy !== null)).toBe(true);
+        const shared = page.items.find((code) => code.code === registrationCode)!;
+        const belowUsedCount = await api(`/api/v1/admin/registration-codes/${shared.id}`, {method: "PATCH", jar: adminJar, json: {maxUses: 2}});
+        expect(belowUsedCount.status).toBe(400);
+        expect(((await belowUsedCount.json()) as {message?: string}).message).toContain("使用上限不能小于已使用次数");
+
+        const disabled = await api(`/api/v1/admin/registration-codes/${created.id}`, {method: "PATCH", jar: adminJar, json: {disabled: true}});
+        expect(disabled.status).toBe(200);
+        const deniedDisabled = await api("/api/auth/register", {json: {username: "disabled-code-user", password: "password123", registrationCode: created.code}});
+        expect(deniedDisabled.status).toBe(400);
+        expect(((await deniedDisabled.json()) as {message?: string}).message).toContain("注册码已停用");
+
+        await api(`/api/v1/admin/registration-codes/${created.id}`, {method: "PATCH", jar: adminJar, json: {disabled: false}});
+        const past = dateIsNumber ? Date.now() - 1000 : new Date(Date.now() - 1000).toISOString();
+        await db!.execute({sql: "UPDATE RegistrationCode SET expiresAt = ? WHERE id = ?", args: [past, created.id]});
+        const deniedExpired = await api("/api/auth/register", {json: {username: "expired-code-user", password: "password123", registrationCode: created.code}});
+        expect(deniedExpired.status).toBe(400);
+        expect(((await deniedExpired.json()) as {message?: string}).message).toContain("注册码已过期");
 
         // 非 admin 不可见
-        const forbidden = await api("/api/v1/admin/invite-codes", {jar: u1Jar});
+        const forbidden = await api("/api/v1/admin/registration-codes", {jar: u1Jar});
         expect(forbidden.status).toBe(403);
+    });
+
+    it("用户邀请码：可选归属、分享次数和创建者权限", async () => {
+        const createdResponse = await api("/api/v1/me/invite-codes", {jar: u1Jar, json: {note: "好友", maxUses: 2, expiresAt: null}});
+        expect(createdResponse.status).toBe(200);
+        const invite = (await createdResponse.json()) as InviteCodeDto;
+
+        const foreign = await api(`/api/v1/me/invite-codes/${invite.id}`, {method: "PATCH", jar: u2Jar, json: {disabled: true}});
+        expect(foreign.status).toBe(404);
+
+        const invited = await api("/api/auth/register", {json: {username: "invited-user", password: "password123", registrationCode, inviteCode: invite.code}});
+        expect(invited.status).toBe(200);
+        const mine = (await (await api("/api/v1/me/invite-codes", {jar: u1Jar})).json()) as InviteCodeDto[];
+        expect(mine[0]?.usedCount).toBe(1);
+
+        const disabled = await api(`/api/v1/me/invite-codes/${invite.id}`, {method: "PATCH", jar: u1Jar, json: {disabled: true}});
+        expect(disabled.status).toBe(200);
+        const denied = await api("/api/auth/register", {json: {username: "invite-disabled-user", password: "password123", registrationCode, inviteCode: invite.code}});
+        expect(denied.status).toBe(400);
+        expect(((await denied.json()) as {message?: string}).message).toContain("邀请码已停用");
     });
 
     it("OAuth 补全注册守卫：无 pending 身份时 GET 404 / POST 400", async () => {
         const read = await api("/api/auth/register/oauth");
         expect(read.status).toBe(404);
 
-        const complete = await api("/api/auth/register/oauth", {json: {username: "ghosty", inviteCode: "nbw-whatever"}});
+        const complete = await api("/api/auth/register/oauth", {json: {username: "ghosty", registrationCode: "nbr-whatever"}});
         expect(complete.status).toBe(400);
     });
 
@@ -444,7 +482,7 @@ describe("Admin 统计与备份用量", () => {
         expect(stats.userTotal).toBeGreaterThanOrEqual(4); // admin + au1..au3
         expect(stats.userRecent30d).toBeGreaterThanOrEqual(3);
         expect(stats.itemPublished).toBeGreaterThanOrEqual(1);
-        expect(stats.inviteUnused).toBe(1); // 「备用」那张
+        expect(stats.registrationCodeTotal).toBe(2);
         expect(stats.reportPending).toBe(0);
         expect(stats.backupCount).toBe(0);
     });

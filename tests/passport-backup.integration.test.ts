@@ -7,7 +7,8 @@ import {strToU8} from "fflate";
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
 import type {AuthorizationDto, DeviceCodeDto, PendingDeviceDto, TokenGrantDto} from "../shared/dto/passport.dto";
 import type {BackupDto, BackupListDto} from "../shared/dto/backup.dto";
-import type {InviteCodeDto, ItemVersionDto, PageDto, WorkshopItemDto} from "../shared/dto/workshop.dto";
+import type {ItemVersionDto, PageDto, WorkshopItemDto} from "../shared/dto/workshop.dto";
+import type {RegistrationCodeDto} from "../shared/dto/access-code.dto";
 import {buildPackageZip} from "./helpers/zip";
 
 // Passport + Backup 真实 HTTP 集成测试：build 产物起真实 server，覆盖
@@ -233,15 +234,15 @@ afterAll(async () => {
 });
 
 describe("Passport 设备授权流", () => {
-    it("准备：admin 登录、邀请码注册两个用户", async () => {
+    it("准备：admin 登录、注册码注册两个用户", async () => {
         const login = await api("/api/auth/login", {jar: adminJar, json: {username: "admin", password: "admin1234567890-test"}});
         expect(login.status).toBe(200);
-        const issued = await api("/api/v1/admin/invite-codes", {jar: adminJar, json: {count: 2}});
-        const codes = ((await issued.json()) as InviteCodeDto[]).map((code) => code.code);
+        const issued = await api("/api/v1/admin/registration-codes", {jar: adminJar, json: {count: 1, maxUses: null, expiresAt: null}});
+        const codes = ((await issued.json()) as RegistrationCodeDto[]).map((code) => code.code);
 
-        const register1 = await api("/api/auth/register", {jar: userJar, json: {username: "author1", password: "password123", inviteCode: codes[0]}});
+        const register1 = await api("/api/auth/register", {jar: userJar, json: {username: "author1", password: "password123", registrationCode: codes[0]}});
         expect(register1.status).toBe(200);
-        const register2 = await api("/api/auth/register", {jar: otherJar, json: {username: "other1", password: "password123", inviteCode: codes[1]}});
+        const register2 = await api("/api/auth/register", {jar: otherJar, json: {username: "other1", password: "password123", registrationCode: codes[0]}});
         expect(register2.status).toBe(200);
     });
 
@@ -336,7 +337,7 @@ describe("Passport 设备授权流", () => {
         expect(patched.status).toBe(200);
 
         // admin 端点永不接受 Bearer
-        const admin = await api("/api/v1/admin/invite-codes", {token, json: {count: 1}});
+        const admin = await api("/api/v1/admin/registration-codes", {token, json: {count: 1}});
         expect(admin.status).toBe(401);
     });
 

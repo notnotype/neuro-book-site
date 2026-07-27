@@ -1,6 +1,6 @@
 # NeuroBook Passport 与官方站点 API v1
 
-> 状态：**已实施（2026-07-22，Task 112 A/B/C 三阶段 + Task 119 账号第二轮 §5 扩订；浏览器验收待做）**。
+> 状态：**已实施（2026-07-22，Task 112 A/B/C 三阶段 + Task 119 账号第二轮；2026-07-27 扩订注册码/邀请码合同；浏览器验收待做）**。
 > 本文件是 Passport / 官方站点接口的唯一真相源。服务端（neuro-book-site）与实例客户端（neuro-book 仓）都以此为准；改动接口必须先改本文件。
 > 产品讨论与实施 walkthrough 见 neuro-book 仓 `docs/tasks/112-passport-official-site/README.md`。
 
@@ -25,6 +25,8 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 | 实例密码 | `auth: true` 时的进门验证，纯本地，一实例一道门。与 Passport 无关。 |
 | 账号槽位（Account Slot） | 实例内持有一份 Passport 授权的本地身份槽。**只管在线身份**（以谁的名义访问官方站），不管本地数据可见性。一个实例可有多个槽位（笔名场景），v1 实例侧只实现默认槽位。 |
 | NeuroBook 账号（Passport Account） | 官方站的身份主体，即现有 `User` 表。产品主键永远是它，上游 OAuth（GitHub 等）只是登录入口。 |
+| 注册码（Registration Code） | 管理员签发的注册准入凭据。可不限次数或限制次数，可设置过期时间并停用；注册时必填。 |
+| 邀请码（Invite Code） | 已登录用户创建的可选邀请归属凭据。可限制次数、设置过期时间并停用，但不能替代注册码授予注册资格。 |
 | 实例授权（Instance Authorization） | 一次设备码流批准产生的授权：绑定（账号, 实例名, scope 集合），承载一条 refresh token 链。可在面板单独吊销。 |
 | Scope | 授权的权限范围字符串，见 §7。 |
 
@@ -47,7 +49,7 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 - DTO 字段 camelCase，zod 校验（沿用现有 `shared/` DTO 模式）。
 - 错误格式：沿用站点现有 `createError` 结构；**token 端点例外**，其业务错误经 `data.error` 携带 OAuth 风格错误码（`authorization_pending` 等，见 §6.4），便于客户端状态机分支。
 - 时间一律 ISO 8601 UTC 字符串。
-- 限流：设备码申请按 IP 限频；token 轮询必须遵守 `interval`，过快返回 `slow_down`。账号面（2026-07-22 第二轮起为正式合同，进程内固定窗口，超限 429，额度 env 可覆写供测试）：登录 10 次 / 5 分钟 / IP+用户名（`NB_LOGIN_RATE_LIMIT`；键上用户名防误伤共享出口，撒网式换名爆破由邀请码闸门兜底）；注册（含 OAuth 补全注册，共享额度）5 次 / 小时 / IP（`NB_REGISTER_RATE_LIMIT`）；修改密码 5 次 / 小时 / 用户（`NB_PASSWORD_RATE_LIMIT`）。
+- 限流：设备码申请按 IP 限频；token 轮询必须遵守 `interval`，过快返回 `slow_down`。账号面（2026-07-22 第二轮起为正式合同，进程内固定窗口，超限 429，额度 env 可覆写供测试）：登录 10 次 / 5 分钟 / IP+用户名（`NB_LOGIN_RATE_LIMIT`；键上用户名防误伤共享出口，撒网式换名爆破由注册码准入门禁兜底）；注册（含 OAuth 补全注册，共享额度）5 次 / 小时 / IP（`NB_REGISTER_RATE_LIMIT`）；修改密码 5 次 / 小时 / 用户（`NB_PASSWORD_RATE_LIMIT`）。
 
 ## 5. 账号 API
 
@@ -57,7 +59,7 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 
 | 端点 | 说明 |
 | --- | --- |
-| `POST /api/auth/register` | 用户名 + 密码 + 邀请码注册。邀请码闸门保留。 |
+| `POST /api/auth/register` | `{ username, password, registrationCode, inviteCode? }`。注册码必填并负责准入；邀请码可选，只记录邀请归属。两类码与用户创建在同一事务内消费。 |
 | `POST /api/auth/login` / `POST /api/auth/logout` | cookie session。密码为空的 OAuth 免密账号走统一「用户名或密码错误」401，不泄露账号存在性。 |
 | `GET /api/auth/me` | 当前会话账号。 |
 
@@ -69,9 +71,22 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 | `PATCH /api/v1/me/profile` | `{ displayName, bio, websiteUrl, avatarUrl }`。bio ≤200；URL 字段为空或 http(s) 且 ≤500（avatarUrl 限 http(s) 防 `javascript:` 注入）。成功后刷新会话身份。 |
 | `POST /api/v1/me/password` | `{ currentPassword?, newPassword }`。已有密码必须验旧密（错则 401）；**无密码账号免旧密补设**（OAuth 注册账号由此获得密码登录能力，也解锁解绑）。成功后 `sessionVersion + 1` 踢掉其他设备，当前会话重写保活。 |
 
+注册与邀请凭据管理（cookie session 专属）：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /api/v1/admin/registration-codes` | 管理员分页查看全部注册码及其使用次数、过期和停用状态。 |
+| `POST /api/v1/admin/registration-codes` | 管理员批量签发：`{ count, note, maxUses, expiresAt }`。`maxUses=null` 表示不限次数，`expiresAt=null` 表示永不过期。 |
+| `PATCH /api/v1/admin/registration-codes/:id` | 管理员修改备注、使用上限、过期时间或停用状态；有限上限不能低于已使用次数。 |
+| `GET /api/v1/me/invite-codes` | 当前用户查看自己创建的全部邀请码。 |
+| `POST /api/v1/me/invite-codes` | 当前用户创建邀请码：`{ note, maxUses, expiresAt }`，空值语义同注册码。 |
+| `PATCH /api/v1/me/invite-codes/:id` | 创建者修改自己的邀请码；他人邀请码统一返回 404。 |
+
+注册码与邀请码都采用原子条件更新消费。有限次数不会被并发注册穿透；任一可选邀请码无效时，整个注册事务回滚，注册码使用次数也不增加。分享链接使用 `/register?registrationCode=...&inviteCode=...`，可只带其中一个参数，但提交注册时仍必须有有效注册码。
+
 ### 5.2 上游 OAuth 关联（GitHub，2026-07-22 第二轮落地）
 
-冻结原则：上游身份只能**关联**到 NeuroBook 账号（`PassportIdentity` 表，§10），不能替代它作为主键；解绑后账号照常存在。GitHub 注册**仍需邀请码**（闸门对 OAuth 用户不豁免）。
+冻结原则：上游身份只能**关联**到 NeuroBook 账号（`PassportIdentity` 表，§10），不能替代它作为主键；解绑后账号照常存在。GitHub 注册**仍需注册码**，可同时填写邀请码；准入门禁对 OAuth 用户不豁免。
 
 站点回调路由 `GET /auth/github`（nuxt-auth-utils OAuth handler，env `NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET`，GitHub OAuth App 回调地址 `https://<site>/auth/github`）。单路由三分支行为矩阵：
 
@@ -79,14 +94,14 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 | --- | --- |
 | GitHub 身份已绑定某账号 | 该账号 disabled → 302 `/login?error=disabled`；active → 写会话，302 `/`。当前已登录他人也切换到绑定账号。 |
 | 未绑定 + 当前已登录 | 给当前账号建 `PassportIdentity`（绑定）；账号 `avatarUrl` 为空则自动填 GitHub 头像；302 `/me?tab=account&github=linked`。 |
-| 未绑定 + 未登录 | pending 身份写入 session（sealed cookie，不落库）；302 `/register/github` 补全页（填用户名 + 邀请码，免设密码）。 |
+| 未绑定 + 未登录 | pending 身份写入 session（sealed cookie，不落库）；302 `/register/github` 补全页（填用户名 + 注册码 + 可选邀请码，免设密码）。 |
 
 配套端点：
 
 | 端点 | 说明 |
 | --- | --- |
 | `GET /api/auth/register/oauth` | 补全页读取 pending 身份：`{ provider, providerUsername, suggestedUsername, displayName, avatarUrl }`；无 pending 404。 |
-| `POST /api/auth/register/oauth` | `{ username, inviteCode }`。从 session 读 pending 身份（无则 400）；事务内建账号（`passwordHash` 为空 + GitHub 头像/昵称）+ `PassportIdentity` + 消费邀请码；成功写正式会话。 |
+| `POST /api/auth/register/oauth` | `{ username, registrationCode, inviteCode? }`。从 session 读 pending 身份（无则 400）；事务内建账号（`passwordHash` 为空 + GitHub 头像/昵称）+ `PassportIdentity` + 消费两类码；成功写正式会话。 |
 | `GET /api/v1/passport/identities` | 本账号已关联的上游身份列表（cookie session 专属）。 |
 | `DELETE /api/v1/passport/identities/:id` | 解绑。**守卫：账号未设密码时拒绝（400），防唯一登录方式被移除后账号失联**；先经 `POST /api/v1/me/password` 补设密码。 |
 
@@ -360,9 +375,45 @@ model PassportIdentity {
     @@unique([provider, providerUserId])
     @@index([userId])
 }
+
+// 管理员签发的注册准入凭据；maxUses 为空表示不限次数
+model RegistrationCode {
+    id          Int       @id @default(autoincrement())
+    code        String    @unique
+    note        String    @default("")
+    maxUses     Int?
+    usedCount   Int       @default(0)
+    lastUsedAt  DateTime?
+    expiresAt   DateTime?
+    disabledAt  DateTime?
+    createdById Int
+    createdAt   DateTime  @default(now())
+    createdBy User   @relation("RegistrationCodeCreated", fields: [createdById], references: [id])
+    users     User[] @relation("RegistrationCodeUses")
+    @@index([createdById])
+    @@index([disabledAt, expiresAt])
+}
+
+// 用户创建的可选邀请归属凭据；不能替代注册码
+model InviteCode {
+    id         Int       @id @default(autoincrement())
+    code       String    @unique
+    note       String    @default("")
+    maxUses    Int?
+    usedCount  Int       @default(0)
+    lastUsedAt DateTime?
+    expiresAt  DateTime?
+    disabledAt DateTime?
+    ownerId    Int
+    createdAt  DateTime  @default(now())
+    owner User   @relation("InviteCodeCreated", fields: [ownerId], references: [id])
+    users User[] @relation("InviteCodeUses")
+    @@index([ownerId, createdAt])
+    @@index([disabledAt, expiresAt])
+}
 ```
 
-`User` 表增量（2026-07-22 第二轮）：`passwordHash` 转可空（为空 = OAuth 免密账号，不能密码登录）；新增 profile 字段 `avatarUrl` / `bio` / `websiteUrl`（默认空串）；`InviteCode` 增 `note`（admin 备注用途）。无数据迁移。
+`User` 表增量：2026-07-22 将 `passwordHash` 转可空（为空 = OAuth 免密账号，不能密码登录），并新增 profile 字段 `avatarUrl` / `bio` / `websiteUrl`。2026-07-27 增加 `registrationCodeId` 与 `inviteCodeId` 两个可空归属外键；旧的一次性 `InviteCode` 数据迁为不限次数 `RegistrationCode`，已有使用者归属保留到 `registrationCodeId`，新的用户邀请码表从空表开始。
 
 ## 11. 实例侧客户端合同（neuro-book 仓职责）
 
@@ -385,11 +436,12 @@ model PassportIdentity {
 - **A — Passport 地基**：schema、设备码流、token 端点与轮换撤链、`/link` 页、授权管理 API + 面板页。
 - **B — Backup 服务端**：三张表之 `InstanceBackup`、上传/列表/下载/删除、配额与 rotate、面板备份页。
 - **C — 实例客户端**（neuro-book 仓）：设置页关联面板、凭据存储、备份/恢复 UI。
-- **D — 账号第二轮**（2026-07-22）：GitHub OAuth 关联/登录/邀请码补全注册（§5.2）、profile 与改密（§5.1）、账号面限流（§4）。
+- **D — 账号第二轮**（2026-07-22）：GitHub OAuth 关联/登录/注册补全（§5.2）、profile 与改密（§5.1）、账号面限流（§4）。
+- **E — 注册码与邀请码分离**（2026-07-27）：管理员注册码负责准入；用户邀请码记录可选归属；两类码支持不限/限次、过期、停用与分享链接。
 - 预留：邮箱注册、Contribution。
 
 开放问题（实施时定，不阻塞 spec）：
 
 1. 恢复应用机制（§9.5 两候选）。
 2. 站点是否需要「备份在线预览」（列 zip 清单）——倾向不做，保持 opaque。
-3. 邀请码在官方站开放注册后的去留（当前保留）。
+3. 生产何时通过 Public Invite Gate 并开放注册。代码能力已具备，但 Task 128 私有模式仍强制关闭注册与 GitHub OAuth。

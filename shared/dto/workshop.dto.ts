@@ -104,16 +104,6 @@ export type WorkshopMetaDto = {
     itemTypes: WorkshopItemType[];
 };
 
-// 邀请码（admin 视角）
-export type InviteCodeDto = {
-    id: number;
-    code: string;
-    note: string; // 签发时的用途备注；空串表示未填
-    usedBy: string | null; // 使用者 username；null 表示未使用
-    usedAt: string | null; // null 表示未使用
-    createdAt: string;
-};
-
 // 举报（admin 视角）
 export type ReportDto = {
     id: number;
