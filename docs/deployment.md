@@ -2,7 +2,7 @@
 
 本文只覆盖应用容器。DMIT 的 DNS、证书、Nginx stream 和 Xray 443 切换必须使用 Task 128 单独的维护窗口 runbook，不能仅按本文直接改公网入口。
 
-截至 2026-07-27，公开 GHCR 的 digest `sha256:c32043c9bd1f6820ea3b9aa1380e057addbe17a41c7254d62ea62b449f8a793c` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:6fa3ed4c9d0aa1e45c31b148230e3e6a019083c7455f2d5c86fd71001f5d0474` 已完成实际回滚演练。空卷 migration、管理员 stdin 初始化、私有模式门禁、Workshop 与 `.nbbackup` 往返、容器重建、主机重启和同盘冷快照整体恢复均已实际通过；DNS、证书和 443 仍未切换。
+截至 2026-07-27，公开 GHCR 的 digest `sha256:c32043c9bd1f6820ea3b9aa1380e057addbe17a41c7254d62ea62b449f8a793c` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:6fa3ed4c9d0aa1e45c31b148230e3e6a019083c7455f2d5c86fd71001f5d0474` 已完成实际回滚演练。空卷 migration、管理员 stdin 初始化、私有模式门禁、Workshop 与 `.nbbackup` 往返、容器重建、主机重启和同盘冷快照整体恢复均已实际通过；DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端最终确认。
 
 ## 目录与权限
 
@@ -54,6 +54,30 @@ unset ADMIN_INPUT
 ```
 
 随后在 loopback 完成登录、设备码、Workshop、加密备份上传/下载和恢复 smoke。公网反代未接入前不要改 DNS。
+
+## 管理员密码维护
+
+源码环境使用一个显式命令管理管理员密码。`create` 只新建不存在的管理员，`reset` 只重置已存在且角色为 admin 的账号；两种模式均拒绝隐式覆盖或提升普通账号：
+
+```bash
+ADMIN_INPUT="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=\n')"
+printf '%s\n' "$ADMIN_INPUT" | bun run db:admin -- create
+printf '管理员密码（仅此一次）: %s\n' "$ADMIN_INPUT"
+unset ADMIN_INPUT
+```
+
+生产容器使用镜像内编译好的 Node 工具。重置会递增 `sessionVersion`，使全部旧登录会话失效；不会改变账号角色或启用状态：
+
+```bash
+cd /srv/neuro-book-site
+ADMIN_INPUT="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=\n')"
+printf '%s\n' "$ADMIN_INPUT" | sudo docker compose exec -T site \
+  node /app/dist/admin-password.mjs reset
+printf '管理员新密码（仅此一次）: %s\n' "$ADMIN_INPUT"
+unset ADMIN_INPUT
+```
+
+管理员用户名读取 `ADMIN_USERNAME`，未配置时为 `admin`。密码至少 16 个字符，只能经 stdin 输入；不要把密码放入命令参数、环境文件或运维日志。
 
 ## 运行时约束检查
 

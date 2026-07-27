@@ -7,7 +7,7 @@
     "scripts": {
         "dev": "nuxt prepare && prisma generate && nuxt dev",
         "build": "nuxt prepare && prisma generate && nuxt build && bun run build:runtime-tools",
-        "build:runtime-tools": "bun build scripts/ensure-sqlite-db.ts --target=node --format=esm --packages=external --outfile=dist/ensure-sqlite-db.mjs && bun build scripts/init-db.ts --target=node --format=esm --packages=external --outfile=dist/init-db.mjs",
+        "build:runtime-tools": "bun build scripts/ensure-sqlite-db.ts --target=node --format=esm --packages=external --outfile=dist/ensure-sqlite-db.mjs && bun build scripts/init-db.ts --target=node --format=esm --packages=external --outfile=dist/init-db.mjs && bun build scripts/admin-password.ts --target=node --format=esm --packages=external --outfile=dist/admin-password.mjs",
         "preview": "nuxt preview",
         "typecheck": "nuxt prepare && prisma generate && vue-tsc --noEmit",
         "test": "vitest run",
@@ -16,7 +16,8 @@
         "db:deploy": "prisma migrate deploy",
         "db:setup": "prisma generate && bun scripts/ensure-sqlite-db.ts && prisma migrate deploy && bun scripts/init-db.ts",
         "db:migrate:dev": "prisma migrate dev",
-        "db:init": "bun scripts/init-db.ts"
+        "db:init": "bun scripts/init-db.ts",
+        "db:admin": "bun scripts/admin-password.ts"
     },
     "dependencies": {
         "@codemirror/lang-javascript": "^6.2.5",

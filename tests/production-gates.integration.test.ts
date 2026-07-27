@@ -74,6 +74,12 @@ beforeAll(async () => {
         input: "admin-production-test-password\n",
         stdio: "pipe",
     });
+    execSync("node dist/admin-password.mjs reset", {
+        cwd: repoRoot,
+        env,
+        input: "admin-production-reset-password\n",
+        stdio: "pipe",
+    });
     server = spawn(process.execPath, [serverEntry], {cwd: repoRoot, env, stdio: "pipe"});
     await waitUntilLive();
 }, 90_000);
@@ -132,7 +138,7 @@ describe("owner-only 公网门禁", () => {
         const response = await fetch(`${baseUrl}/api/auth/login`, {
             method: "POST",
             headers: {"content-type": "application/json"},
-            body: JSON.stringify({username: "admin", password: "admin-production-test-password"}),
+            body: JSON.stringify({username: "admin", password: "admin-production-reset-password"}),
         });
         expect(response.status).toBe(200);
         expect(response.headers.getSetCookie().some((cookie) => /;\s*Secure(?:;|$)/i.test(cookie))).toBe(true);
