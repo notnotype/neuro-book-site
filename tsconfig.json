@@ -1,0 +1,20 @@
+{
+    "extends": "./.nuxt/tsconfig.json",
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "strict": true,
+        "skipLibCheck": true,
+        "types": ["node", "vitest/globals"]
+    },
+    "include": [
+        ".nuxt/**/*.d.ts",
+        "app/**/*",
+        "server/**/*",
+        "shared/**/*",
+        "scripts/**/*",
+        "nuxt.config.ts",
+        "prisma.config.ts"
+    ]
+}

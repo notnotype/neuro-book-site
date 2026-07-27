@@ -1,0 +1,73 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    min-height: 100%;
+    margin: 0;
+    background: var(--bg-main, #0e0f12);
+    -webkit-text-size-adjust: 100%;
+}
+
+body,
+#__nuxt {
+    min-height: 100vh;
+}
+
+body {
+    margin: 0;
+    overflow-x: hidden;
+    background: var(--bg-main, #0e0f12);
+    color: var(--text-main, #f4f4f3);
+    /* 统一字体栈，兼顾中英文与等宽数字场景 */
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+    /* 深色界面下开启字体平滑，文字更细腻 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+/* 文本选区跟随当前主题的选区色（回落到强调色混合） */
+::selection {
+    background: var(--selection-bg, color-mix(in srgb, var(--accent-main, #f59e0b) 30%, transparent));
+    color: var(--text-main, #f4f4f3);
+}
+
+/* 深色主题下的细滚动条：Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong, #3b3e47) transparent;
+}
+
+/* 深色主题下的细滚动条：WebKit / Chromium */
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--border-strong, #3b3e47);
+    /* 透明边框 + padding-box，让轨道两侧留白，滚动条看起来更细 */
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted, #7c7e87);
+    background-clip: padding-box;
+}

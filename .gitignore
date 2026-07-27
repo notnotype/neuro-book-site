@@ -1,0 +1,12 @@
+node_modules
+.nuxt
+.output
+dist
+.agent
+.env
+data.db
+data.db-*
+data/
+server/generated
+coverage
+*.log

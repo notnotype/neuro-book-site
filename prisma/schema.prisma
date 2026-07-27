@@ -1,0 +1,267 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../server/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum UserRole {
+  admin
+  user
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+model User {
+  id             Int        @id @default(autoincrement())
+  username       String     @unique
+  displayName    String     @default("")
+  passwordHash   String? // 为空表示 OAuth 免密账号：不能密码登录，须先补设密码才可解绑上游身份
+  avatarUrl      String     @default("") // 头像图片 URL（http/https）；空串回落首字母色块。GitHub 关联时自动填
+  bio            String     @default("") // 个性签名，公开展示
+  websiteUrl     String     @default("") // 个人网站链接（http/https）
+  role           UserRole   @default(user)
+  status         UserStatus @default(active)
+  sessionVersion Int        @default(1)
+  lastLoginAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @default(now()) @updatedAt
+
+  inviteCodesCreated     InviteCode[]            @relation("InviteCodeCreated")
+  inviteCodesUsed        InviteCode[]            @relation("InviteCodeUsed")
+  items                  WorkshopItem[]
+  likes                  Like[]
+  favorites              Favorite[]
+  comments               Comment[]
+  reports                Report[]
+  passportAuthorizations PassportAuthorization[]
+  passportIdentities     PassportIdentity[]
+  backups                InstanceBackup[]
+
+  @@index([role, status])
+  @@index([updatedAt])
+}
+
+// ---------- Workshop ----------
+
+// 资产类型：skill = 目录包（含 SKILL.md），profile = <name>.profile.tsx + 可选 <name>.home/
+enum WorkshopItemType {
+  skill
+  profile
+}
+
+// 条目状态三态：published 公开；unlisted 作者自主下架（可自行恢复）；removed admin 下架（作者不可恢复）
+enum WorkshopItemStatus {
+  published
+  unlisted
+  removed
+}
+
+// 邀请码：注册消费后作废（一码一人）
+model InviteCode {
+  id          Int       @id @default(autoincrement())
+  code        String    @unique
+  note        String    @default("") // admin 备注用途（发给谁 / 什么活动），仅 admin 可见
+  createdById Int
+  usedById    Int? // 为空表示尚未被消费
+  usedAt      DateTime? // 为空表示尚未被消费
+  createdAt   DateTime  @default(now())
+
+  createdBy User  @relation("InviteCodeCreated", fields: [createdById], references: [id])
+  usedBy    User? @relation("InviteCodeUsed", fields: [usedById], references: [id])
+
+  @@index([createdById])
+}
+
+// 工坊条目：一个可被浏览 / 下载的 skill 或 profile 发布单元
+model WorkshopItem {
+  id            Int                @id @default(autoincrement())
+  slug          String             @unique // 平台唯一标识，先到先得
+  name          String // 安装名，取自首版 manifest，同条目恒定不可改
+  type          WorkshopItemType
+  title         String
+  summary       String             @default("")
+  description   String             @default("") // markdown 描述
+  tagsJson      String             @default("[]") // JSON 字符串数组序列化的自由标签
+  authorId      Int
+  status        WorkshopItemStatus @default(published)
+  featured      Boolean            @default(false) // admin 打标，首页「编辑推荐」分区
+  downloadCount Int                @default(0)
+  likeCount     Int                @default(0)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @default(now()) @updatedAt
+
+  author    User          @relation(fields: [authorId], references: [id])
+  versions  ItemVersion[]
+  likes     Like[]
+  favorites Favorite[]
+  comments  Comment[]
+  reports   Report[]
+
+  @@index([status, updatedAt])
+  @@index([status, featured])
+  @@index([type, status])
+  @@index([authorId])
+}
+
+// 条目版本：一次 zip 上传；version 真相源是包内 manifest，平台只校验递增
+model ItemVersion {
+  id            Int      @id @default(autoincrement())
+  itemId        Int
+  version       Int // 整数递增版本
+  changelog     String   @default("")
+  fileName      String // 上传时的原始文件名（展示用）
+  fileSize      Int // zip 字节数
+  sha256        String // 服务端计算的 zip sha256（hex）
+  minAppVersion String? // 为空表示作者未声明 NeuroBook 兼容下限
+  createdAt     DateTime @default(now())
+
+  item WorkshopItem @relation(fields: [itemId], references: [id])
+
+  @@unique([itemId, version])
+}
+
+// 点赞：公开热度信号，参与排序
+model Like {
+  userId    Int
+  itemId    Int
+  createdAt DateTime @default(now())
+
+  user User         @relation(fields: [userId], references: [id])
+  item WorkshopItem @relation(fields: [itemId], references: [id])
+
+  @@id([userId, itemId])
+  @@index([itemId])
+}
+
+// 收藏：私人书签，仅 /me 可见
+model Favorite {
+  userId    Int
+  itemId    Int
+  createdAt DateTime @default(now())
+
+  user User         @relation(fields: [userId], references: [id])
+  item WorkshopItem @relation(fields: [itemId], references: [id])
+
+  @@id([userId, itemId])
+  @@index([userId, createdAt])
+}
+
+// 评论：扁平一级、纯文本；deletedAt 非空表示已被本人或 admin 软删，列表查询过滤
+model Comment {
+  id        Int       @id @default(autoincrement())
+  itemId    Int
+  authorId  Int
+  content   String // 纯文本，前端插值展示，不渲染 markdown
+  createdAt DateTime  @default(now())
+  deletedAt DateTime? // 为空表示可见；非空表示已软删
+
+  item   WorkshopItem @relation(fields: [itemId], references: [id])
+  author User         @relation(fields: [authorId], references: [id])
+
+  @@index([itemId, createdAt])
+}
+
+// 举报：resolvedAt 为空表示未处理
+model Report {
+  id         Int       @id @default(autoincrement())
+  itemId     Int
+  reporterId Int
+  reason     String
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime? // 为空表示未处理
+
+  item     WorkshopItem @relation(fields: [itemId], references: [id])
+  reporter User         @relation(fields: [reporterId], references: [id])
+
+  @@index([resolvedAt, createdAt])
+}
+
+// ---------- Passport（reference/passport/api-v1.md §10） ----------
+
+// 设备码：一次实例关联流程的短命凭据（RFC 8628 子集）
+model PassportDeviceCode {
+  id              Int       @id @default(autoincrement())
+  deviceCodeHash  String    @unique // sha256(deviceCode) hex，明文不落库
+  userCode        String    @unique // XXXX-XXXX 展示码
+  instanceName    String // 实例建议名，批准时可被用户覆盖
+  scopesJson      String // JSON string[]，申请的 scope 集合
+  status          String // pending / approved / denied / expired / consumed
+  approvedById    Int? // 为空表示尚未有用户处理
+  authorizationId Int? // 批准时创建的授权 id；为空表示未批准。兑换（consume）只签发 token
+  expiresAt       DateTime
+  lastPolledAt    DateTime? // 为空表示实例尚未轮询过；用于 slow_down 判定
+  createdAt       DateTime  @default(now())
+}
+
+// 实例授权：一次设备码批准产生的 token 链宿主，面板管理单位
+model PassportAuthorization {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  instanceName String
+  scopesJson   String // JSON string[]，批准的 scope 集合
+  lastUsedAt   DateTime? // 为空表示批准后从未使用；access 校验时懒更新
+  revokedAt    DateTime? // 为空表示有效
+  createdAt    DateTime  @default(now())
+
+  user   User            @relation(fields: [userId], references: [id])
+  tokens PassportToken[]
+
+  @@index([userId, revokedAt])
+}
+
+// Passport token：access 与 refresh 统一存 sha256 摘要；refresh 轮换靠 status 流转
+model PassportToken {
+  id              Int       @id @default(autoincrement())
+  authorizationId Int
+  kind            String // access / refresh
+  tokenHash       String    @unique // sha256(token) hex，明文不落库
+  status          String // active / rotated / revoked；rotated 仅 refresh 使用，重放即撤链
+  expiresAt       DateTime? // access 必填；refresh 为空表示无绝对过期（闲置作废按 createdAt 判定）
+  createdAt       DateTime  @default(now())
+
+  authorization PassportAuthorization @relation(fields: [authorizationId], references: [id])
+
+  @@index([authorizationId, kind, status])
+}
+
+// 上游 OAuth 身份（spec §5.2）：只关联不替代——一个上游身份至多绑一个账号，解绑后账号照常存在
+model PassportIdentity {
+  id               Int      @id @default(autoincrement())
+  provider         String // "github"（自由字符串，扩 provider 不改表）
+  providerUserId   String // 上游用户唯一 id（GitHub 数字 id 字符串化）
+  providerUsername String // 上游展示名快照（GitHub login），仅展示用
+  userId           Int
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+// ---------- Backup（reference/passport/api-v1.md §9） ----------
+
+// 实例备份：账号级资产（吊销授权不删备份）；归档对服务端是 opaque blob
+model InstanceBackup {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  instanceLabel String // 上传时授权的 instanceName 快照，仅作展示与 rotate 分组
+  kind          String // manual / auto；rotate 只淘汰 auto
+  fileSize      Int
+  sha256        String // 服务端复算确认过的归档摘要（hex 小写）
+  keyId         String // 客户端备份主密钥标识（16 位小写 hex，不具备解密能力）
+  appVersion    String
+  comment       String   @default("")
+  storagePath   String // 相对 NB_BACKUP_DIR 的落盘路径
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}

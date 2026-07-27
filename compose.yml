@@ -1,0 +1,43 @@
+name: neuro-book-site
+
+services:
+    site:
+        image: ${NB_SITE_IMAGE:?NB_SITE_IMAGE must be a public GHCR digest reference}
+        env_file:
+            - .env
+        ports:
+            - "127.0.0.1:3100:3000"
+        volumes:
+            - ./data:/data
+        read_only: true
+        tmpfs:
+            - /tmp:size=64m,mode=1777
+        init: true
+        restart: unless-stopped
+        mem_limit: 768m
+        pids_limit: 256
+        security_opt:
+            - no-new-privileges:true
+        cap_drop:
+            - ALL
+        healthcheck:
+            test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 30s
+        logging:
+            driver: json-file
+            options:
+                max-size: 10m
+                max-file: "3"
+        networks:
+            site_net: {}
+
+networks:
+    site_net:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: 172.30.0.0/24
+                  gateway: 172.30.0.1

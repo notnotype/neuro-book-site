@@ -1,0 +1,135 @@
+import busboy from "busboy";
+import {createHash, randomUUID} from "node:crypto";
+import {createWriteStream} from "node:fs";
+import {mkdir, rm} from "node:fs/promises";
+import {join} from "node:path";
+import type {H3Event} from "h3";
+import {createError} from "h3";
+import {UploadVersionFieldsSchema} from "./workshop-dto";
+import {workshopTmpDir} from "./workshop-files";
+
+const WORKSHOP_MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+export type ParsedWorkshopUpload = {
+    tmpPath: string;
+    fileName: string;
+    fileSize: number;
+    sha256: string;
+    changelog: string;
+};
+
+/**
+ * Workshop 压缩包上限。测试可通过 NB_WORKSHOP_MAX_FILE_BYTES 缩小阈值。
+ */
+export function workshopMaxFileBytes(): number {
+    const configured = Number.parseInt(process.env.NB_WORKSHOP_MAX_FILE_BYTES?.trim() ?? "", 10);
+    return Number.isSafeInteger(configured) && configured > 0 ? configured : WORKSHOP_MAX_FILE_BYTES;
+}
+
+/**
+ * 用 busboy 把 Workshop multipart 顺序落到同盘 tmp，并边写边计算摘要。
+ */
+export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorkshopUpload> {
+    const request = event.node.req;
+    const maxBytes = workshopMaxFileBytes();
+    const declaredLength = Number.parseInt(String(request.headers["content-length"] ?? ""), 10);
+    if (Number.isSafeInteger(declaredLength) && declaredLength > maxBytes + 64 * 1024) {
+        throw createError({statusCode: 413, message: "Workshop 压缩包超过 20 MiB 上限", data: {error: "file_too_large"}});
+    }
+
+    await mkdir(workshopTmpDir(), {recursive: true});
+    const tmpPath = join(workshopTmpDir(), `${randomUUID()}.part`);
+    return await new Promise<ParsedWorkshopUpload>((resolvePromise, rejectPromise) => {
+        const parser = busboy({
+            headers: request.headers,
+            limits: {files: 1, fields: 2, fileSize: maxBytes, fieldSize: 16 * 1024},
+        });
+        const output = createWriteStream(tmpPath);
+        const hash = createHash("sha256");
+        let fileSeen = false;
+        let fileName = "";
+        let fileSize = 0;
+        let changelog = "";
+        let settled = false;
+
+        /** 统一失败出口：终止解析，写流关闭后清理 tmp。 */
+        const fail = (error: unknown): void => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            request.unpipe(parser);
+            parser.removeAllListeners();
+            output.destroy();
+            output.once("close", () => {
+                rm(tmpPath, {force: true}).catch(() => undefined);
+            });
+            rejectPromise(error);
+        };
+
+        parser.on("field", (name, value) => {
+            if (name === "changelog") {
+                changelog = value;
+            }
+        });
+        parser.on("file", (name, file, info) => {
+            if (name !== "file" || fileSeen) {
+                file.resume();
+                return;
+            }
+            fileSeen = true;
+            fileName = info.filename;
+            file.on("data", (chunk: Buffer) => {
+                if (settled) {
+                    return;
+                }
+                fileSize += chunk.byteLength;
+                hash.update(chunk);
+                if (!output.write(chunk)) {
+                    file.pause();
+                    output.once("drain", () => file.resume());
+                }
+            });
+            file.on("limit", () => {
+                fail(createError({statusCode: 413, message: "Workshop 压缩包超过 20 MiB 上限", data: {error: "file_too_large"}}));
+            });
+            file.on("error", fail);
+        });
+        parser.on("filesLimit", () => fail(createError({statusCode: 400, message: "只能上传一个 zip 文件"})));
+        parser.on("fieldsLimit", () => fail(createError({statusCode: 400, message: "multipart 字段过多"})));
+        parser.on("error", fail);
+        request.on("error", fail);
+        parser.on("close", () => {
+            if (settled) {
+                return;
+            }
+            output.end(() => {
+                if (settled) {
+                    return;
+                }
+                if (!fileSeen) {
+                    fail(createError({statusCode: 400, message: "缺少 zip 文件字段 file"}));
+                    return;
+                }
+                if (!fileName.toLowerCase().endsWith(".zip")) {
+                    fail(createError({statusCode: 400, message: "Workshop 文件必须是 .zip"}));
+                    return;
+                }
+                const fields = UploadVersionFieldsSchema.safeParse({changelog});
+                if (!fields.success) {
+                    fail(createError({statusCode: 400, message: fields.error.issues.map((issue) => issue.message).join("；")}));
+                    return;
+                }
+                settled = true;
+                resolvePromise({
+                    tmpPath,
+                    fileName,
+                    fileSize,
+                    sha256: hash.digest("hex"),
+                    changelog: fields.data.changelog,
+                });
+            });
+        });
+        request.pipe(parser);
+    });
+}

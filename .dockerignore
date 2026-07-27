@@ -1,0 +1,14 @@
+.git
+.github
+.agent
+.nuxt
+.output
+dist
+node_modules
+data
+data.db
+data.db-*
+.env
+.env.production
+coverage
+*.log
