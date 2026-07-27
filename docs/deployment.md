@@ -2,6 +2,8 @@
 
 本文只覆盖应用容器。DMIT 的 DNS、证书、Nginx stream 和 Xray 443 切换必须使用 Task 128 单独的维护窗口 runbook，不能仅按本文直接改公网入口。
 
+截至 2026-07-27，公开 GHCR 的首个生产基线已在 DMIT 以固定 digest 匿名拉取并运行。空卷 migration、管理员 stdin 初始化、私有模式门禁、Workshop 与 `.nbbackup` 往返、容器重建、主机重启和同盘冷快照整体恢复均已实际通过；DNS、证书和 443 仍未切换。
+
 ## 目录与权限
 
 ```bash
