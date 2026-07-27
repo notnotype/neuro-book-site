@@ -82,7 +82,7 @@ describe("productionConfigErrors", () => {
         vi.stubEnv("NB_WORKSHOP_MAX_UNCOMPRESSED_BYTES", String(100 * 1024 * 1024));
         vi.stubEnv("NB_WORKSHOP_MAX_ENTRIES", "500");
         vi.stubEnv("NB_LOG_LEVEL", "info");
-        vi.stubEnv("NB_LOG_FILE", "C:/logs/site.jsonl");
+        vi.stubEnv("NB_LOG_FILE", "/logs/site.jsonl");
         vi.stubEnv("NB_TRUSTED_PROXY_ADDRESSES", "172.30.0.1");
         vi.stubEnv("NB_PRIVATE_MODE", "1");
         vi.stubEnv("ADMIN_PASSWORD", "");
