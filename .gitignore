@@ -7,6 +7,7 @@ dist
 data.db
 data.db-*
 data/
+logs/
 server/generated
 coverage
 *.log

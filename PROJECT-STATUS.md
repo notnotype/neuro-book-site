@@ -2,7 +2,7 @@
 
 ## Summary
 
-NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 128 的代码生产化已完成：仓库硬切为 `neuro-book-site`，Workshop 有界流式上传、跨 Workshop/Backup 全站容量门禁、密文 `.nbbackup`、私有模式、live/ready、stdin 管理员创建/重置和非 root 只读容器合同均已落地。管理员注册码与用户邀请码已拆分，支持不限/限次、过期、停用和双参数注册链接；生产私有模式仍关闭注册。Windows typecheck/build 与 123 项全量测试通过；公开 GitHub 仓库与匿名可拉取的 GHCR `linux/amd64` 镜像已建立。DMIT 已安装 Docker Engine/Compose，以固定 digest 在 `127.0.0.1:3100` 运行；空卷 migration、Secure Cookie、私有门禁、Workshop/Backup 往返、容器重建、主机重启和冷快照整体恢复均已验证。DNS、证书和 Nginx stream 443 已接入，仍等待既有 Xray 客户端确认及真实 NeuroBook 公网闭环；Public Invite Gate 不在本任务内。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 128 的代码生产化已完成：仓库硬切为 `neuro-book-site`，Workshop 有界流式上传、跨 Workshop/Backup 全站容量门禁、密文 `.nbbackup`、私有模式、live/ready、stdin 管理员创建/重置和非 root 只读容器合同均已落地。管理员注册码与用户邀请码已拆分，支持不限/限次、过期、停用和双参数注册链接；生产私有模式仍关闭注册。官方站已增加 Pino 结构化请求/异常日志、`X-Request-ID`、stdout + 专用持久日志卷和独立轮转合同。Windows typecheck/build 与 131 项全量测试通过；公开 GitHub 仓库与匿名可拉取的 GHCR `linux/amd64` 镜像已建立。DMIT 当前仍运行上一固定 digest，日志版本待新镜像通过 Actions 后部署；本轮不调整 DNS、443、Nginx SNI 或 Xray。Public Invite Gate 不在本任务内。
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
@@ -15,6 +15,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 - `GET /api/health/live` 只证明进程可响应；`GET /api/health/ready` 检查数据库、待应用 migration、数据库/Workshop/Backup 目录读写。容量耗尽只返回 degraded + HTTP 200。
 - 生产镜像使用 Bun 1.3.14 构建、Node 24.13.0 trixie slim 运行；Compose 约束非 root UID 10001、只读根、tmpfs、768 MiB、仅 loopback 3100 与固定可信 bridge。
 - `bun run db:admin -- create|reset` 提供显式管理员密码维护；密码只从 stdin 读取，生产镜像内对应 `/app/dist/admin-password.mjs`，reset 会递增会话版本并注销旧会话。
+- Pino 请求日志固定输出到 stdout 与 `/logs/site.jsonl`，响应带 `X-Request-ID`；成功健康检查降噪，URL query、header/body 和凭据不进入日志。Docker 控制台保留 10 MiB x 3，持久文件按 20 MiB x 14 独立轮转。
 - DMIT 当前运行注册码/邀请码版本的公开 GHCR digest `sha256:77f922014080e810e9852dc49ef0e71c40ed755eb8b817a934b76e6c2d394c19`；上一 digest `sha256:8f4dcd22aba78185636f0902c6cdd0bd28080729a50ef5712a2e5ba88fbb7214` 与对应冷快照保留用于整体回滚。更早版本已完成实际镜像回滚演练。
 - 条目状态 `published / unlisted / removed`；非 published 对公开面（列表/详情/版本/下载/评论）一律 404。
 - 包版本真相源是 zip 内 `nbook-package.json` 的 `version`，平台只校验严格递增；拒绝时直接提示应改为 N+1。

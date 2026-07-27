@@ -1,0 +1,9 @@
+/srv/neuro-book-site/logs/site.jsonl {
+    size 20M
+    rotate 14
+    compress
+    delaycompress
+    copytruncate
+    missingok
+    notifempty
+}

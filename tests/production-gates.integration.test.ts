@@ -1,5 +1,5 @@
 import {execSync, spawn, type ChildProcess} from "node:child_process";
-import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs";
+import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {join, resolve} from "node:path";
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
 
@@ -8,10 +8,12 @@ const runDir = join(repoRoot, ".agent", `production-gates-${process.pid}`);
 const dbPath = join(runDir, "site.db").replaceAll("\\", "/");
 const workshopDir = join(runDir, "workshop");
 const backupsDir = join(runDir, "backups");
+const logFile = join(runDir, "logs", "site.jsonl");
 const port = 35900 + (process.pid % 300);
 const baseUrl = `http://127.0.0.1:${port}`;
 
 let server: ChildProcess | null = null;
+let serverStdout = "";
 
 /** 构造可通过启动门禁的 owner-only 生产环境。 */
 function productionEnv(targetPort: number): NodeJS.ProcessEnv {
@@ -29,6 +31,8 @@ function productionEnv(targetPort: number): NodeJS.ProcessEnv {
         NB_TRUSTED_PROXY_ADDRESSES: "127.0.0.1",
         NB_PRIVATE_MODE: "1",
         NB_GITHUB_OAUTH_ENABLED: "0",
+        NB_LOG_LEVEL: "info",
+        NB_LOG_FILE: logFile,
         NB_STORAGE_MAX_BYTES: String(6 * 1024 * 1024 * 1024),
         NB_STORAGE_RESERVED_BYTES: "1",
         NB_BACKUP_MAX_FILE_BYTES: String(1024 * 1024 * 1024),
@@ -58,6 +62,48 @@ async function waitUntilLive(): Promise<void> {
     throw new Error("生产门禁测试 server 启动超时");
 }
 
+/** 等待异步 Pino destination 出现匹配记录。 */
+async function waitForLogEntry(predicate: (entry: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() <= deadline) {
+        if (existsSync(logFile)) {
+            const entries = readFileSync(logFile, "utf8")
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+            const match = entries.find(predicate);
+            if (match) {
+                return match;
+            }
+        }
+        await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
+    }
+    throw new Error("等待结构化日志超时");
+}
+
+/** 等待 stdout 出现匹配的 Pino JSONL，验证持久文件不是唯一日志出口。 */
+async function waitForStdoutEntry(predicate: (entry: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() <= deadline) {
+        const entries = serverStdout
+            .split("\n")
+            .filter(Boolean)
+            .flatMap((line) => {
+                try {
+                    return [JSON.parse(line) as Record<string, unknown>];
+                } catch {
+                    return [];
+                }
+            });
+        const match = entries.find(predicate);
+        if (match) {
+            return match;
+        }
+        await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
+    }
+    throw new Error("等待 stdout 结构化日志超时");
+}
+
 beforeAll(async () => {
     const serverEntry = join(repoRoot, ".output", "server", "index.mjs");
     if (!existsSync(serverEntry)) {
@@ -81,6 +127,10 @@ beforeAll(async () => {
         stdio: "pipe",
     });
     server = spawn(process.execPath, [serverEntry], {cwd: repoRoot, env, stdio: "pipe"});
+    server.stdout?.setEncoding("utf8");
+    server.stdout?.on("data", (chunk: string) => {
+        serverStdout += chunk;
+    });
     await waitUntilLive();
 }, 90_000);
 
@@ -108,6 +158,55 @@ describe("生产健康接口", () => {
         expect((await ready.json()) as {status: string}).toMatchObject({status: "ready"});
 
         expect((await fetch(`${baseUrl}/api/health`)).status).toBe(404);
+    });
+});
+
+describe("生产结构化日志", () => {
+    it("返回 requestId，并持久化不含 query/header 密钥的请求摘要", async () => {
+        const secret = `registration-secret-${process.pid}`;
+        const response = await fetch(`${baseUrl}/api/health?registrationCode=${secret}`, {
+            headers: {
+                authorization: `Bearer ${secret}`,
+                cookie: `session=${secret}`,
+            },
+        });
+        expect(response.status).toBe(404);
+        const requestId = response.headers.get("x-request-id");
+        expect(requestId).toMatch(/^[0-9a-f-]{36}$/u);
+
+        const entry = await waitForLogEntry((candidate) => candidate.requestId === requestId
+            && candidate.event === "http.request.completed");
+        const stdoutEntry = await waitForStdoutEntry((candidate) => candidate.requestId === requestId
+            && candidate.event === "http.request.completed");
+        expect(entry).toMatchObject({
+            level: "info",
+            service: "neuro-book-site",
+            method: "GET",
+            path: "/api/health",
+            statusCode: 404,
+        });
+        expect(stdoutEntry).toMatchObject(entry);
+        const persisted = readFileSync(logFile, "utf8");
+        expect(persisted).not.toContain(secret);
+        expect(persisted).not.toContain("registrationCode");
+        expect(persisted).not.toContain("authorization");
+        expect(persisted).not.toContain("cookie");
+    });
+
+    it("请求解析异常写独立 error 事件，且不记录 body", async () => {
+        const secret = `password-secret-${process.pid}`;
+        const response = await fetch(`${baseUrl}/api/auth/login`, {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: `{"password":"${secret}"`,
+        });
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        const requestId = response.headers.get("x-request-id");
+        expect(requestId).not.toBeNull();
+
+        await waitForLogEntry((candidate) => candidate.requestId === requestId
+            && candidate.event === "http.request.error");
+        expect(readFileSync(logFile, "utf8")).not.toContain(secret);
     });
 });
 

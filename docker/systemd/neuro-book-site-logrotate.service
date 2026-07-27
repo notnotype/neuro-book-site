@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotate NeuroBook Site persistent logs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate -s /var/lib/logrotate/neuro-book-site.status /etc/logrotate.d/neuro-book-site

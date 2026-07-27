@@ -1,5 +1,9 @@
 import {isIP} from "node:net";
+import {isAbsolute} from "node:path";
 import type {IncomingHttpHeaders} from "node:http";
+
+export const SITE_LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+export type SiteLogLevel = typeof SITE_LOG_LEVELS[number];
 
 type ClientAddressEvent = {
     node: {
@@ -114,6 +118,14 @@ export function productionConfigErrors(): string[] {
     requirePositiveInteger(errors, "NB_WORKSHOP_MAX_FILE_BYTES");
     requirePositiveInteger(errors, "NB_WORKSHOP_MAX_UNCOMPRESSED_BYTES");
     requirePositiveInteger(errors, "NB_WORKSHOP_MAX_ENTRIES");
+    const logLevel = process.env.NB_LOG_LEVEL?.trim().toLowerCase() ?? "info";
+    if (!SITE_LOG_LEVELS.includes(logLevel as SiteLogLevel)) {
+        errors.push(`NB_LOG_LEVEL 必须是 ${SITE_LOG_LEVELS.join("/")}`);
+    }
+    const logFile = process.env.NB_LOG_FILE?.trim() ?? "";
+    if (!logFile || !isAbsolute(logFile)) {
+        errors.push("NB_LOG_FILE 必须是绝对路径");
+    }
     if (trustedProxyAddresses().size === 0) {
         errors.push("NB_TRUSTED_PROXY_ADDRESSES 必须至少包含一个可信直连代理 IP");
     }

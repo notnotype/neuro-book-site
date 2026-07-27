@@ -81,6 +81,8 @@ describe("productionConfigErrors", () => {
         vi.stubEnv("NB_WORKSHOP_MAX_FILE_BYTES", String(20 * 1024 * 1024));
         vi.stubEnv("NB_WORKSHOP_MAX_UNCOMPRESSED_BYTES", String(100 * 1024 * 1024));
         vi.stubEnv("NB_WORKSHOP_MAX_ENTRIES", "500");
+        vi.stubEnv("NB_LOG_LEVEL", "info");
+        vi.stubEnv("NB_LOG_FILE", "C:/logs/site.jsonl");
         vi.stubEnv("NB_TRUSTED_PROXY_ADDRESSES", "172.30.0.1");
         vi.stubEnv("NB_PRIVATE_MODE", "1");
         vi.stubEnv("ADMIN_PASSWORD", "");
@@ -102,5 +104,16 @@ describe("productionConfigErrors", () => {
         expect(errors).toContain("NUXT_SESSION_PASSWORD 必须是至少 48 字符且不含示例值的随机 secret");
         expect(errors).toContain("NB_STORAGE_MAX_BYTES 必须是正整数字节数");
         expect(errors).toContain("生产环境禁止 ADMIN_PASSWORD；管理员密码只能经 stdin 初始化");
+    });
+
+    it("拒绝非法日志级别与相对日志路径", () => {
+        validProductionEnv();
+        vi.stubEnv("NB_LOG_LEVEL", "silent");
+        vi.stubEnv("NB_LOG_FILE", "logs/site.jsonl");
+
+        expect(productionConfigErrors()).toEqual(expect.arrayContaining([
+            "NB_LOG_LEVEL 必须是 debug/info/warn/error",
+            "NB_LOG_FILE 必须是绝对路径",
+        ]));
     });
 });

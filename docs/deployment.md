@@ -8,6 +8,7 @@
 
 ```bash
 sudo install -d -m 0700 -o 10001 -g 10001 /srv/neuro-book-site/data
+sudo install -d -m 0700 -o 10001 -g 10001 /srv/neuro-book-site/logs
 cd /srv/neuro-book-site
 sudo install -m 0600 -o root -g root .env.production.example .env
 ```
@@ -18,6 +19,8 @@ sudo install -m 0600 -o root -g root .env.production.example .env
 - `NUXT_SESSION_PASSWORD` 使用 48 字节 CSPRNG 结果，不得复用账号密码。
 - 不得添加 `ADMIN_PASSWORD`、OAuth secret 或 GitHub Token。
 - `NB_TRUSTED_PROXY_ADDRESSES` 固定为 Compose bridge 网关 `172.30.0.1`。
+- `NB_LOG_LEVEL` 只接受 `debug`、`info`、`warn`、`error`，生产默认使用 `info`。
+- `NB_LOG_FILE` 固定为 `/logs/site.jsonl`；生产缺失、使用相对路径或目录不可写时拒绝启动。
 
 生成 Session secret：
 
@@ -110,6 +113,7 @@ printf 'snapshot=%s\n' "$SNAPSHOT"
 ```
 
 不得在应用仍写入 SQLite 时制作“热 tar”。DMIT 整盘损坏会同时丢失数据和同盘快照，这是已接受的内测剩余风险。
+`logs/` 有独立轮转和容量边界，不进入站点冷快照，也不计入 Workshop/Backup 用户配额。
 
 ## 固定 digest 升级与回滚
 
@@ -128,7 +132,33 @@ curl --fail --silent http://127.0.0.1:3100/api/health/ready
 ```bash
 sudo docker compose ps
 sudo docker compose logs --tail 200 site
+sudo docker compose logs -f --tail 200 site
+sudo tail -f /srv/neuro-book-site/logs/site.jsonl
 curl --fail --silent http://127.0.0.1:3100/api/health/ready
 ```
 
-日志使用 Docker `json-file`，单文件 10 MiB、保留 3 份。本阶段不配置外部可用性或 TLS 告警，依赖 Docker health、readiness、Nginx/应用日志和人工检查；这是降低后的私有内测验收标准。
+stdout 与 `site.jsonl` 都是 Pino JSONL。每个请求响应都有 `X-Request-ID`，可以用同一个 `requestId` 在两处对账；成功的 live/ready 健康检查不写 info，失败或 degraded 才写。日志不记录 query、请求/响应 body、Cookie、Authorization、User-Agent、密码、token、设备码、恢复码、备份密钥、注册码或邀请码。
+
+Docker `json-file` 仍按单文件 10 MiB、保留 3 份轮转。持久文件使用仓库提供的专用 logrotate 配置和小时级 timer：
+
+```bash
+cd /srv/neuro-book-site
+sudo install -m 0644 docker/logrotate/neuro-book-site /etc/logrotate.d/neuro-book-site
+sudo install -m 0644 docker/systemd/neuro-book-site-logrotate.service /etc/systemd/system/neuro-book-site-logrotate.service
+sudo install -m 0644 docker/systemd/neuro-book-site-logrotate.timer /etc/systemd/system/neuro-book-site-logrotate.timer
+sudo logrotate --debug /etc/logrotate.d/neuro-book-site
+sudo systemctl daemon-reload
+sudo systemctl enable --now neuro-book-site-logrotate.timer
+sudo systemctl list-timers neuro-book-site-logrotate.timer
+```
+
+配置在 `site.jsonl` 达到 20 MiB 时使用 `copytruncate`，保留 14 份并压缩旧文件，最坏占用约 300 MiB。部署验收时可强制轮转两次并检查压缩文件；两次之间发一个普通请求，确保当前日志非空：
+
+```bash
+sudo logrotate --force /etc/logrotate.d/neuro-book-site
+curl --fail --silent http://127.0.0.1:3100/api/v1/meta >/dev/null
+sudo logrotate --force /etc/logrotate.d/neuro-book-site
+sudo gzip --test /srv/neuro-book-site/logs/site.jsonl.2.gz
+```
+
+本阶段不配置外部可用性或 TLS 告警，依赖 Docker health、readiness、Nginx/应用日志和人工检查；这是降低后的私有内测验收标准。
