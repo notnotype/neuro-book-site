@@ -185,8 +185,8 @@ async function waitForWorkflow(commit: string, timeoutMs: number): Promise<GitHu
             "--repo", REPOSITORY,
             "--workflow", WORKFLOW,
             "--event", "push",
-            "--commit", commit,
-            "--limit", "10",
+            "--branch", EXPECTED_BRANCH,
+            "--limit", "20",
             "--json", "databaseId,headSha,status,conclusion,url",
         ], {capture: true});
         const runs = JSON.parse(payload) as GitHubRun[];
