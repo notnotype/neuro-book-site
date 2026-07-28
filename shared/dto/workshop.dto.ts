@@ -1,8 +1,8 @@
 // Workshop 输出 DTO：前后端共享的响应结构定义。
 // 请求校验（zod schema）在 server/utils/workshop-dto.ts，这里只放纯类型。
 
-// 资产类型：skill = 目录包（含 SKILL.md），profile = <name>.profile.tsx + 可选 <name>.home/
-export type WorkshopItemType = "skill" | "profile";
+// 资产类型：三类资产共享根 package.json 外壳。
+export type WorkshopItemType = "skill" | "workflow" | "profile";
 
 // 条目状态：published 公开；unlisted 作者自主下架；removed admin 下架
 export type WorkshopItemStatus = "published" | "unlisted" | "removed";
@@ -46,7 +46,7 @@ export type WorkshopItemDto = {
     downloadCount: number;
     likeCount: number;
     commentCount: number;
-    latestVersion: number | null; // 尚未上传任何版本时为 null
+    latestVersion: string | null; // 尚未上传任何版本时为 null
     author: ItemAuthorDto;
     createdAt: string; // ISO 时间
     updatedAt: string; // ISO 时间
@@ -56,7 +56,7 @@ export type WorkshopItemDto = {
 // 条目版本（一次 zip 上传）
 export type ItemVersionDto = {
     id: number;
-    version: number;
+    version: string;
     changelog: string;
     fileName: string;
     fileSize: number;
@@ -100,7 +100,7 @@ export type WorkshopMetaDto = {
     platform: "neuro-book-site";
     platformVersion: string; // 平台自身版本（package.json version）
     apiVersion: 1;
-    manifestVersion: 1;
+    packageSchemaVersion: 1;
     itemTypes: WorkshopItemType[];
 };
 
@@ -125,7 +125,7 @@ export type PackageFileDto = {
 
 // 包文件列表（在线预览用）
 export type PackageFileListDto = {
-    version: number; // 实际解析的版本号（请求缺省 version 时为最新版）
+    version: string; // 实际解析的 SemVer（请求缺省 version 时为最新版）
     files: PackageFileDto[];
 };
 

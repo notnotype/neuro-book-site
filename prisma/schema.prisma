@@ -55,9 +55,10 @@ model User {
 
 // ---------- Workshop ----------
 
-// 资产类型：skill = 目录包（含 SKILL.md），profile = <name>.profile.tsx + 可选 <name>.home/
+// 资产类型：三类资产共享根 package.json 外壳，各自使用固定入口。
 enum WorkshopItemType {
   skill
+  workflow
   profile
 }
 
@@ -108,7 +109,7 @@ model InviteCode {
   @@index([disabledAt, expiresAt])
 }
 
-// 工坊条目：一个可被浏览 / 下载的 skill 或 profile 发布单元
+// 工坊条目：一个可被浏览 / 下载的 Agent 资产发布单元
 model WorkshopItem {
   id            Int                @id @default(autoincrement())
   slug          String             @unique // 平台唯一标识，先到先得
@@ -139,11 +140,13 @@ model WorkshopItem {
   @@index([authorId])
 }
 
-// 条目版本：一次 zip 上传；version 真相源是包内 manifest，平台只校验递增
+// 条目版本：version 是公开 SemVer；ordinal 是发布顺序与磁盘文件名，不暴露给客户端。
 model ItemVersion {
   id            Int      @id @default(autoincrement())
   itemId        Int
-  version       Int // 整数递增版本
+  ordinal       Int // 条目内严格递增发布序号；旧整数版本原值迁入此列
+  version       String // 根 package.json 中的 canonical SemVer
+  packageSchemaVersion Int @default(1) // 归档已迁移到根 package.json 协议版本
   changelog     String   @default("")
   fileName      String // 上传时的原始文件名（展示用）
   fileSize      Int // zip 字节数
@@ -153,6 +156,7 @@ model ItemVersion {
 
   item WorkshopItem @relation(fields: [itemId], references: [id])
 
+  @@unique([itemId, ordinal])
   @@unique([itemId, version])
 }
 

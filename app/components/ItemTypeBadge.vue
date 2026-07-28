@@ -2,7 +2,7 @@
 import {computed} from "vue";
 import type {WorkshopItemType} from "../../shared/dto/workshop.dto";
 
-// 类型徽章：skill = 青绿（工具/技能），profile = 紫（含可执行代码，偏警示色系）。
+// 三类资产使用固定类别色，便于在列表中快速识别。
 const props = withDefaults(defineProps<{
     type: WorkshopItemType;
     size?: "sm" | "md";
@@ -10,9 +10,15 @@ const props = withDefaults(defineProps<{
     size: "md",
 });
 
-const tone = computed(() => props.type === "profile"
-    ? {label: "Profile", icon: "i-lucide-cpu", cls: "border-[rgba(168,85,247,0.35)] bg-[rgba(168,85,247,0.15)] text-[#c084fc]"}
-    : {label: "Skill", icon: "i-lucide-wrench", cls: "border-[rgba(20,184,166,0.35)] bg-[rgba(20,184,166,0.15)] text-[#2dd4bf]"});
+const tone = computed(() => {
+    if (props.type === "profile") {
+        return {label: "Profile", icon: "i-lucide-cpu", cls: "border-[rgba(168,85,247,0.35)] bg-[rgba(168,85,247,0.15)] text-[#c084fc]"};
+    }
+    if (props.type === "workflow") {
+        return {label: "Workflow", icon: "i-lucide-workflow", cls: "border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.14)] text-[#fbbf24]"};
+    }
+    return {label: "Skill", icon: "i-lucide-wrench", cls: "border-[rgba(20,184,166,0.35)] bg-[rgba(20,184,166,0.15)] text-[#2dd4bf]"};
+});
 </script>
 
 <template>

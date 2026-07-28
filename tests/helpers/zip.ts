@@ -23,13 +23,26 @@ export function readDirAsZipEntries(dir: string, prefix = ""): Record<string, Ui
 
 /**
  * 构造资产包 zip。
- * @param manifest 写入根部 nbook-package.json 的对象；传 null 表示刻意不带 manifest（拒绝用例）。
- *                 类型放宽为 object 以便构造字段非法的 manifest。
+ * @param packageJson 写入根部 package.json 的对象；传 null 表示刻意不带 package.json（拒绝用例）。
+ *                    旧测试 fixture 仍可传 manifest 形状，helper 会映射成新协议，避免干扰 HTTP 场景本身。
  */
-export function buildPackageZip(manifest: object | null, entries: Record<string, Uint8Array>): Uint8Array {
+export function buildPackageZip(packageJson: object | null, entries: Record<string, Uint8Array>): Uint8Array {
     const all: Record<string, Uint8Array> = {...entries};
-    if (manifest !== null) {
-        all["nbook-package.json"] = strToU8(JSON.stringify(manifest, null, 4));
+    if (packageJson !== null) {
+        const raw = packageJson as {manifestVersion?: number; type?: string; name?: string; version?: number; minAppVersion?: string};
+        const normalized = raw.manifestVersion !== undefined
+            ? {
+                name: raw.name,
+                version: `${raw.version}.0.0`,
+                type: "module",
+                neurobook: {
+                    schemaVersion: raw.manifestVersion,
+                    assetType: raw.type,
+                    ...(raw.minAppVersion ? {minAppVersion: raw.minAppVersion} : {}),
+                },
+            }
+            : packageJson;
+        all["package.json"] = strToU8(JSON.stringify(normalized, null, 4));
     }
     return zipSync(all);
 }

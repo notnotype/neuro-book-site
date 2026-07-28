@@ -9,7 +9,7 @@ export default defineEventHandler((): WorkshopMetaDto => {
         platform: "neuro-book-site",
         platformVersion: pkg.version,
         apiVersion: 1,
-        manifestVersion: 1,
-        itemTypes: ["skill", "profile"],
+        packageSchemaVersion: 1,
+        itemTypes: ["skill", "workflow", "profile"],
     };
 });

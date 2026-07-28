@@ -22,5 +22,10 @@ export default defineConfig({
         }),
     ],
     // nb-ui 组件内部固定使用的图标：清单由 nb-ui 导出，随库版本自动同步
-    safelist: [...NB_UI_ICON_SAFELIST],
+    safelist: [
+        ...NB_UI_ICON_SAFELIST,
+        "i-lucide-workflow", "i-lucide-file-plus", "i-lucide-folder-plus", "i-lucide-folder-input",
+        "i-lucide-file-archive", "i-lucide-package-open", "i-lucide-files", "i-lucide-image",
+        "i-lucide-shield-alert",
+    ],
 });

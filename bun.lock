@@ -10,7 +10,7 @@
         "@codemirror/theme-one-dark": "^6.1.3",
         "@libsql/client": "^0.17.4",
         "@libsql/isomorphic-ws": "^0.1.5",
-        "@notnotype/nb-ui": "github:notnotype/nb-ui#e57c6b6a303a9cd981d761d089ccf7dfcafb1cba",
+        "@notnotype/nb-ui": "github:notnotype/nb-ui#291b2d6b49c4e92557eb305a1ffa38370644a5ce",
         "@pinia/nuxt": "^0.11.3",
         "@prisma/adapter-libsql": "^7.8.0",
         "@prisma/client": "^7.8.0",
@@ -25,6 +25,7 @@
         "pinia": "^3.0.4",
         "pino": "^10.3.1",
         "prisma": "^7.8.0",
+        "semver": "^7.8.5",
         "zod": "^4.4.3",
       },
       "devDependencies": {
@@ -33,6 +34,7 @@
         "@nuxtjs/color-mode": "^4.0.0",
         "@types/busboy": "^1.5.4",
         "@types/node": "^25.6.0",
+        "@types/semver": "^7.7.1",
         "@unocss/nuxt": "^66.6.2",
         "typescript": "^5.9.3",
         "unocss": "^66.6.2",
@@ -287,7 +289,7 @@
 
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
 
-    "@notnotype/nb-ui": ["@notnotype/nb-ui@github:notnotype/nb-ui#e57c6b6", { "dependencies": { "@nuxt/kit": "^4.3.1", "@vueuse/core": "^14.3.0" }, "peerDependencies": { "nuxt": "^4.3.1", "vue": "^3.5.24" } }, "notnotype-nb-ui-e57c6b6", "sha512-IRsYgS0qVgqoe21UJNcSjgva+jJzRyRCPId2scUgQ5Wzdxj8LyaxW4YhYCRmDYXAXK74QrTwl036H0McwS4K0w=="],
+    "@notnotype/nb-ui": ["@notnotype/nb-ui@github:notnotype/nb-ui#291b2d6", { "dependencies": { "@nuxt/kit": "^4.3.1", "@vueuse/core": "^14.3.0" }, "peerDependencies": { "nuxt": "^4.3.1", "vue": "^3.5.24" } }, "notnotype-nb-ui-291b2d6", "sha512-n4tBxfiFKSSQiCr8gjjBWLP8EzKaW3zZaqNvRIu7nFnEbGse6m8rSLtswmw161WmXPmtDmC1aS+UYr3QHpcm4A=="],
 
     "@nuxt/cli": ["@nuxt/cli@3.36.1", "", { "dependencies": { "@bomb.sh/tab": "^0.0.17", "@clack/prompts": "^1.6.0", "c12": "^3.3.4", "citty": "^0.2.2", "confbox": "^0.2.4", "consola": "^3.4.2", "debug": "^4.4.3", "defu": "^6.1.7", "exsolve": "^1.0.8", "fuse.js": "^7.4.2", "fzf": "^0.5.2", "giget": "^3.3.0", "jiti": "^2.7.0", "listhen": "^1.10.0", "nypm": "^0.6.7", "ofetch": "^1.5.1", "ohash": "^2.0.11", "pathe": "^2.0.3", "perfect-debounce": "^2.1.0", "pkg-types": "^2.3.1", "scule": "^1.3.0", "semver": "^7.8.5", "srvx": "^0.11.17", "std-env": "^4.1.0", "tinyclip": "^0.1.14", "tinyexec": "^1.2.4", "ufo": "^1.6.4", "youch": "^4.1.1" }, "peerDependencies": { "@nuxt/schema": "^4.4.6" }, "optionalPeers": ["@nuxt/schema"], "bin": { "nuxi": "bin/nuxi.mjs", "nuxt": "bin/nuxi.mjs", "nuxi-ng": "bin/nuxi.mjs", "nuxt-cli": "bin/nuxi.mjs" } }, "sha512-qu0LLFjOr1alMSrcVb3k3fWYXGeETeOIN5UoGoGEjwWVtf+KxQbN5IAzdXb7ip5D3pfKLcrAOTbIGf9XFmeGFQ=="],
 
@@ -632,6 +634,8 @@
     "@types/react": ["@types/react@19.2.17", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw=="],
 
     "@types/resolve": ["@types/resolve@1.20.2", "", {}, "sha512-60BCwRFOZCQhDncwQdxxeOEEkbc5dIMccYLwbxsS4TUNeVECQ/pBJ0j09mrHOl/JJvpRPGwO9SvE4nR2Nb/a4Q=="],
+
+    "@types/semver": ["@types/semver@7.7.1", "", {}, "sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA=="],
 
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
 

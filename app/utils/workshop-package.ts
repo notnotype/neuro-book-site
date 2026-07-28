@@ -1,233 +1,430 @@
-import {zipSync, unzipSync, strToU8} from "fflate";
-import type {WorkshopItemType} from "../../shared/dto/workshop.dto";
+import type {FileTreeMove, FileTreeNode} from "@notnotype/nb-ui/components";
+import {strToU8, unzipSync, zipSync} from "fflate";
+import {inc, valid} from "semver";
+import type {AgentAssetPackageJson, AgentAssetType} from "../../shared/agent-asset-package";
+import {assetEntryPath, hasRuntimeDependencies} from "../../shared/agent-asset-package";
 
-// 前端资产打包工具：把「友好输入」（在线编辑 / 单文件 / 目录 zip）就地打成 canonical zip
-// （根部 nbook-package.json + 入口文件）。canonical 格式是后端唯一契约（存储 / 下载 / Phase 2 安装），
-// 这里只在浏览器生成，生成后仍走后端 parseWorkshopPackage 校验——后端始终是校验真相源。
-
-// kebab-case：与后端 slug / manifest name 同口径
-const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-// 平台按发布表单生成 manifest 的输入
-export type ManifestInput = {
-    type: WorkshopItemType;
-    name: string; // kebab-case 安装名；profile 入口文件名 = <name>.profile.tsx
-    version: number; // 平台决定：新建 = 1，新版本 = latest + 1
-    minAppVersion?: string; // 空 / 缺省表示不声明 NeuroBook 兼容下限
+export type DraftEntry = {
+    path: string;
+    kind: "file" | "directory";
+    bytes: Uint8Array;
 };
 
-// 前端就地解析出的 canonical manifest（结构与后端 PackageManifestSchema 对齐）
-export type ParsedManifest = {
-    manifestVersion: 1;
-    type: WorkshopItemType;
-    name: string;
-    version: number;
-    minAppVersion?: string;
+export type PackageDraft = {entries: DraftEntry[]};
+
+export type PackageWorkbenchState = {
+    draft: PackageDraft;
+    packageJson: AgentAssetPackageJson | null;
+    error: string;
+    dirty: boolean;
 };
 
-// PackageContentInput 产出的内容来源，交给 buildUploadFile 打包
-export type ContentSource =
-    | {kind: "profile"; bytes: Uint8Array} // profile：编辑器全文或单文件读出的字节
-    | {kind: "skill"; bytes: Uint8Array; isDirZip: boolean} // skill：isDirZip=false 时 bytes 是 SKILL.md，true 时是目录 zip
-    | {kind: "advanced"; file: File; parsed: ParsedManifest}; // 高级模式：已是 canonical zip，manifest 已解析
+export type DraftPackageResult =
+    | {ok: true; packageJson: AgentAssetPackageJson}
+    | {ok: false; error: string};
 
-// 打包 / 解析结果
-export type BuildFileResult = {ok: true; file: File} | {ok: false; error: string};
-export type ParseResult = {ok: true; manifest: ParsedManifest; entryNames: string[]} | {ok: false; error: string};
+export type DraftBuildResult =
+    | {ok: true; file: File; bytes: Uint8Array; packageJson: AgentAssetPackageJson}
+    | {ok: false; error: string};
 
-/** 生成 nbook-package.json 字节（缩进 2，便于用户下载后阅读）。 */
-function manifestBytes(input: ManifestInput): Uint8Array {
-    const manifest: Record<string, unknown> = {
-        manifestVersion: 1,
-        type: input.type,
-        name: input.name,
-        version: input.version,
+export type DraftMergeResult =
+    | {ok: true; draft: PackageDraft; conflicts: string[]}
+    | {ok: false; error: string};
+
+export type DraftMoveResult =
+    | {ok: true; draft: PackageDraft; selectedPath: string}
+    | {ok: false; error: string};
+
+const MAX_ENTRIES = 500;
+const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
+const MAX_ZIP_BYTES = 20 * 1024 * 1024;
+const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const WORKFLOW_IMPORT = /(?:^|\n)\s*(?:import\s+|export\s+[^\n;]+\s+from\s+)|\b(?:import|require)\s*\(/m;
+const TEXT_EXTENSIONS = new Set([
+    "md", "markdown", "txt", "json", "ts", "tsx", "js", "jsx", "mjs", "cjs", "yaml", "yml", "toml",
+    "css", "html", "htm", "vue", "csv", "xml", "sh", "ps1", "py", "gitignore", "npmrc",
+]);
+
+/** 创建某类资产的最小可发布模板。 */
+export function createPackageDraft(assetType: AgentAssetType, name = "new-asset", version = "1.0.0"): PackageDraft {
+    const packageJson: AgentAssetPackageJson = {
+        name,
+        version,
+        type: "module",
+        neurobook: {schemaVersion: 1, assetType},
     };
-    if (input.minAppVersion && input.minAppVersion.trim().length > 0) {
-        manifest.minAppVersion = input.minAppVersion.trim();
-    }
-    return strToU8(JSON.stringify(manifest, null, 2));
-}
-
-/**
- * 剥离单层顶层文件夹：Windows 右键压缩「文件夹」会得到 my-skill/SKILL.md 前缀。
- * 若全部文件条目都在同一个顶层目录下，去掉该前缀让 SKILL.md 回到根部；否则原样返回。
- */
-function stripSingleRootFolder(entries: Record<string, Uint8Array>): Record<string, Uint8Array> {
-    const fileNames = Object.keys(entries).filter((name) => !name.endsWith("/")); // 忽略纯目录占位条目
-    const first = fileNames[0];
-    if (!first) {
-        return entries;
-    }
-    const rootSeg = first.split("/")[0] ?? "";
-    const shareRoot = rootSeg.length > 0 && fileNames.every((name) => name.startsWith(`${rootSeg}/`));
-    if (!shareRoot) {
-        return entries;
-    }
-    const stripped: Record<string, Uint8Array> = {};
-    for (const [name, bytes] of Object.entries(entries)) {
-        if (name.endsWith("/")) {
-            continue; // 丢弃目录占位条目，zipSync 会按剩余路径重建目录
-        }
-        stripped[name.slice(rootSeg.length + 1)] = bytes;
-    }
-    return stripped;
-}
-
-/** 丢弃纯目录占位条目，避免 zipSync 报错。 */
-function dropDirEntries(entries: Record<string, Uint8Array>): Record<string, Uint8Array> {
-    const clean: Record<string, Uint8Array> = {};
-    for (const [name, bytes] of Object.entries(entries)) {
-        if (!name.endsWith("/")) {
-            clean[name] = bytes;
-        }
-    }
-    return clean;
-}
-
-/** Uint8Array → 上传用 File（uploadVersion 需要带 filename 的 File）。 */
-function zipToFile(bytes: Uint8Array, slug: string, version: number): File {
-    // DOM lib 的 BlobPart 期望 ArrayBufferView<ArrayBuffer>，fflate 返回 Uint8Array<ArrayBufferLike>，
-    // 运行时完全兼容，仅需类型断言收窄
-    return new File([bytes as BlobPart], `${slug}-v${version}.zip`, {type: "application/zip"});
-}
-
-/**
- * 解析上传的 canonical zip（高级模式就地校验），口径与后端 parseWorkshopPackage 对齐。
- * 真相源仍是后端；这里只为尽早暴露错误。
- */
-export function parseCanonicalZip(bytes: Uint8Array): ParseResult {
-    let entries: Record<string, Uint8Array>;
-    try {
-        entries = unzipSync(bytes);
-    } catch {
-        return {ok: false, error: "无法解析 zip 文件"};
-    }
-    const manifestBytesRaw = entries["nbook-package.json"];
-    if (!manifestBytesRaw) {
-        return {ok: false, error: "包根部缺少 nbook-package.json"};
-    }
-    // JSON.parse 输出无静态类型，逐字段收窄后再使用
-    let raw: unknown;
-    try {
-        raw = JSON.parse(new TextDecoder().decode(manifestBytesRaw));
-    } catch {
-        return {ok: false, error: "nbook-package.json 不是合法 JSON"};
-    }
-    if (typeof raw !== "object" || raw === null) {
-        return {ok: false, error: "nbook-package.json 必须是 JSON 对象"};
-    }
-    const obj = raw as Record<string, unknown>;
-    if (obj.manifestVersion !== 1) {
-        return {ok: false, error: "manifestVersion 必须为 1"};
-    }
-    if (obj.type !== "skill" && obj.type !== "profile") {
-        return {ok: false, error: "type 必须是 skill 或 profile"};
-    }
-    if (typeof obj.name !== "string" || !KEBAB.test(obj.name)) {
-        return {ok: false, error: "name 必须是 kebab-case（小写字母/数字/连字符）"};
-    }
-    if (typeof obj.version !== "number" || !Number.isInteger(obj.version) || obj.version <= 0) {
-        return {ok: false, error: "version 必须是正整数"};
-    }
-    let minAppVersion: string | undefined;
-    if (obj.minAppVersion !== undefined) {
-        if (typeof obj.minAppVersion !== "string" || obj.minAppVersion.trim().length === 0) {
-            return {ok: false, error: "minAppVersion 必须是非空字符串"};
-        }
-        minAppVersion = obj.minAppVersion.trim();
-    }
-    const manifest: ParsedManifest = {manifestVersion: 1, type: obj.type, name: obj.name, version: obj.version, minAppVersion};
-    if (manifest.type === "skill" && !entries["SKILL.md"]) {
-        return {ok: false, error: "skill 包根部必须包含 SKILL.md"};
-    }
-    if (manifest.type === "profile" && !entries[`${manifest.name}.profile.tsx`]) {
-        return {ok: false, error: `profile 包根部必须包含 ${manifest.name}.profile.tsx`};
-    }
-    return {ok: true, manifest, entryNames: Object.keys(entries)};
-}
-
-/**
- * 结构性校验内容来源，供输入组件即时反馈（不需要 name/version 等落库参数）。
- * advanced 已由 parseCanonicalZip 校验，这里直接放行。
- */
-export function validateSource(source: ContentSource): {ok: true} | {ok: false; error: string} {
-    if (source.kind === "advanced") {
-        return {ok: true};
-    }
-    if (source.kind === "profile") {
-        return source.bytes.byteLength > 0 ? {ok: true} : {ok: false, error: "profile 内容为空"};
-    }
-    if (!source.isDirZip) {
-        return source.bytes.byteLength > 0 ? {ok: true} : {ok: false, error: "SKILL.md 内容为空"};
-    }
-    let entries: Record<string, Uint8Array>;
-    try {
-        entries = unzipSync(source.bytes);
-    } catch {
-        return {ok: false, error: "无法解析 zip 文件"};
-    }
-    entries = stripSingleRootFolder(entries);
-    if (!entries["SKILL.md"]) {
-        return {ok: false, error: "目录压缩包根部必须包含 SKILL.md（已自动尝试剥离外层文件夹）"};
-    }
-    return {ok: true};
-}
-
-/**
- * 把内容来源打包成上传用 File。
- * - advanced：内容已是 canonical zip，直接上传（version/name 以其内嵌 manifest 为准，不重打包）；
- * - profile / skill 简单模式：按平台生成的 manifest（type/name/version）就地打包。
- * @param meta 平台决定的落库参数；简单模式 name 通常 = slug，version 平台自增
- */
-export function buildUploadFile(source: ContentSource, meta: {slug: string; name: string; version: number; minAppVersion?: string}): BuildFileResult {
-    if (source.kind === "advanced") {
-        return {ok: true, file: source.file};
-    }
-
-    const manifestInput: ManifestInput = {
-        type: source.kind === "profile" ? "profile" : "skill",
-        name: meta.name,
-        version: meta.version,
-        minAppVersion: meta.minAppVersion,
+    const entry = assetEntryPath(assetType, name);
+    const template = assetType === "skill"
+        ? `---\nname: ${name}\ndescription: 请说明这个 Skill 何时使用。\n---\n\n# ${name}\n`
+        : assetType === "workflow"
+            ? "export default defineWorkflow({\n    name: \"draft-workflow\",\n    steps: [],\n});\n"
+            : "export const profileManifest = {\n    name: \"Writer\",\n};\n";
+    return {
+        entries: [
+            {path: "package.json", kind: "file", bytes: encodePackageJson(packageJson)},
+            {path: entry, kind: "file", bytes: strToU8(template)},
+        ],
     };
+}
 
-    // profile：入口文件名由平台按 name 生成，绕开用户原文件名 / builtin key 带点的问题
-    if (source.kind === "profile") {
-        if (source.bytes.byteLength === 0) {
-            return {ok: false, error: "profile 内容为空"};
-        }
-        const bytes = zipSync({
-            "nbook-package.json": manifestBytes(manifestInput),
-            [`${meta.name}.profile.tsx`]: source.bytes,
-        });
-        return {ok: true, file: zipToFile(bytes, meta.slug, meta.version)};
-    }
-
-    // skill 编辑器：单文件 SKILL.md + 生成的 manifest
-    if (!source.isDirZip) {
-        if (source.bytes.byteLength === 0) {
-            return {ok: false, error: "SKILL.md 内容为空"};
-        }
-        const bytes = zipSync({
-            "nbook-package.json": manifestBytes(manifestInput),
-            "SKILL.md": source.bytes,
-        });
-        return {ok: true, file: zipToFile(bytes, meta.slug, meta.version)};
-    }
-
-    // skill 目录 zip：解压 → 剥离单层顶层文件夹 → 校验 SKILL.md → 注入生成的 manifest → 重打包
+/** 从完整 ZIP 建立草稿，并执行路径、条目数与解压量门禁。 */
+export function draftFromZip(zipBytes: Uint8Array, stripSingleRoot = false): {ok: true; draft: PackageDraft} | {ok: false; error: string} {
     let entries: Record<string, Uint8Array>;
     try {
-        entries = unzipSync(source.bytes);
+        entries = unzipSync(zipBytes);
     } catch {
-        return {ok: false, error: "无法解析 zip 文件"};
+        return {ok: false, error: "无法解析 ZIP 文件"};
     }
-    entries = stripSingleRootFolder(entries);
-    if (!entries["SKILL.md"]) {
-        return {ok: false, error: "目录压缩包根部必须包含 SKILL.md（若压缩了外层文件夹，已自动尝试剥离仍未找到）"};
+    return normalizeDraftEntries(Object.entries(entries).map(([path, bytes]) => ({
+        path: path.endsWith("/") ? path.slice(0, -1) : path,
+        kind: path.endsWith("/") ? "directory" : "file",
+        bytes,
+    })), stripSingleRoot);
+}
+
+/** 从浏览器多文件选择建立目录草稿片段。 */
+export async function draftEntriesFromFiles(files: File[]): Promise<{ok: true; entries: DraftEntry[]} | {ok: false; error: string}> {
+    const entries: DraftEntry[] = [];
+    for (const file of files) {
+        const relativePath = file.webkitRelativePath || file.name;
+        entries.push({path: relativePath, kind: "file", bytes: new Uint8Array(await file.arrayBuffer())});
     }
-    entries["nbook-package.json"] = manifestBytes(manifestInput); // 覆盖 / 注入平台生成的 manifest（简单模式表单为真相源）
-    const bytes = zipSync(dropDirEntries(entries));
-    return {ok: true, file: zipToFile(bytes, meta.slug, meta.version)};
+    const normalized = normalizeDraftEntries(entries, true);
+    return normalized.ok ? {ok: true, entries: normalized.draft.entries} : normalized;
+}
+
+/** 合并导入条目；覆盖冲突与结构校验失败使用不同结果，避免把上限错误当成确认提示。 */
+export function mergeDraftEntries(draft: PackageDraft, imported: DraftEntry[], overwrite: boolean): DraftMergeResult {
+    const next = new Map(draft.entries.map((entry) => [entry.path.toLowerCase(), entry]));
+    const conflicts = imported.filter((entry) => next.has(entry.path.toLowerCase())).map((entry) => entry.path);
+    if (conflicts.length > 0 && !overwrite) {
+        return {ok: true, draft, conflicts};
+    }
+    for (const entry of imported) {
+        next.set(entry.path.toLowerCase(), entry);
+    }
+    const normalized = normalizeDraftEntries([...next.values()]);
+    return normalized.ok ? {ok: true, draft: normalized.draft, conflicts} : normalized;
+}
+
+/** 解析 package.json 并校验三类入口及 Workflow 静态合同。 */
+export function parseDraftPackage(draft: PackageDraft): DraftPackageResult {
+    const packageEntry = draft.entries.find((entry) => entry.kind === "file" && entry.path === "package.json");
+    if (!packageEntry) {
+        return {ok: false, error: "根目录缺少 package.json"};
+    }
+    let raw: unknown; // 外部包 JSON 在这里进入 unknown，随后逐字段收窄。
+    try {
+        raw = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(packageEntry.bytes));
+    } catch {
+        return {ok: false, error: "package.json 不是合法 UTF-8 JSON"};
+    }
+    if (!isObject(raw) || typeof raw.name !== "string" || !KEBAB_CASE.test(raw.name)) {
+        return {ok: false, error: "package.json name 必须是 kebab-case"};
+    }
+    if (typeof raw.version !== "string" || valid(raw.version) !== raw.version) {
+        return {ok: false, error: "package.json version 必须是合法 SemVer"};
+    }
+    if (raw.type !== "module" || !isObject(raw.neurobook) || raw.neurobook.schemaVersion !== 1
+        || (raw.neurobook.assetType !== "skill" && raw.neurobook.assetType !== "workflow" && raw.neurobook.assetType !== "profile")) {
+        return {ok: false, error: "package.json 必须声明 type=module、neurobook.schemaVersion=1 和合法 assetType"};
+    }
+    if (raw.neurobook.minAppVersion !== undefined
+        && (typeof raw.neurobook.minAppVersion !== "string" || valid(raw.neurobook.minAppVersion) !== raw.neurobook.minAppVersion)) {
+        return {ok: false, error: "neurobook.minAppVersion 必须是合法 SemVer"};
+    }
+    const packageJson = raw as AgentAssetPackageJson;
+    const entryPath = assetEntryPath(packageJson.neurobook.assetType, packageJson.name);
+    if (!draft.entries.some((entry) => entry.kind === "file" && entry.path === entryPath)) {
+        return {ok: false, error: `${packageJson.neurobook.assetType} 包根目录必须包含 ${entryPath}`};
+    }
+    if (packageJson.neurobook.assetType === "workflow") {
+        if (hasRuntimeDependencies(packageJson)) {
+            return {ok: false, error: "Workflow 不能声明依赖"};
+        }
+        const workflow = draft.entries.find((entry) => entry.path === "workflow.ts" && entry.kind === "file");
+        let source: string;
+        try {
+            source = new TextDecoder("utf-8", {fatal: true}).decode(workflow?.bytes);
+        } catch {
+            return {ok: false, error: "workflow.ts 不是合法 UTF-8 文本"};
+        }
+        if (WORKFLOW_IMPORT.test(source)) {
+            return {ok: false, error: "Workflow 不允许使用 import、export from 或 require"};
+        }
+    }
+    return {ok: true, packageJson};
+}
+
+/** 构建最终 ZIP；最终压缩字节与解压总量使用与服务端相同的上限。 */
+export function buildDraftZip(draft: PackageDraft, slug: string): DraftBuildResult {
+    const normalized = normalizeDraftEntries(draft.entries);
+    if (!normalized.ok) {
+        return normalized;
+    }
+    const parsed = parseDraftPackage(normalized.draft);
+    if (!parsed.ok) {
+        return parsed;
+    }
+    const zipEntries: Record<string, Uint8Array> = {};
+    for (const entry of normalized.draft.entries) {
+        zipEntries[entry.kind === "directory" ? `${entry.path}/` : entry.path] = entry.bytes;
+    }
+    const bytes = zipSync(zipEntries);
+    if (bytes.byteLength > MAX_ZIP_BYTES) {
+        return {ok: false, error: "最终 ZIP 超过 20 MiB 上限"};
+    }
+    return {
+        ok: true,
+        bytes,
+        packageJson: parsed.packageJson,
+        file: new File([bytes as BlobPart], `${slug}-v${parsed.packageJson.version}.zip`, {type: "application/zip"}),
+    };
+}
+
+/** 结构化修改 package.json，同时保留作者的其它字段。 */
+export function updateDraftPackage(draft: PackageDraft, patch: Partial<Pick<AgentAssetPackageJson, "name" | "version">> & {assetType?: AgentAssetType; minAppVersion?: string}): PackageDraft {
+    const parsed = parseDraftPackageLoosely(draft);
+    if (!parsed) {
+        return draft;
+    }
+    const previousEntry = assetEntryPath(parsed.neurobook.assetType, parsed.name);
+    const next: AgentAssetPackageJson = {
+        ...parsed,
+        ...(patch.name ? {name: patch.name} : {}),
+        ...(patch.version ? {version: patch.version} : {}),
+        neurobook: {
+            ...parsed.neurobook,
+            ...(patch.assetType ? {assetType: patch.assetType} : {}),
+            ...(patch.minAppVersion !== undefined
+                ? patch.minAppVersion ? {minAppVersion: patch.minAppVersion} : {minAppVersion: undefined}
+                : {}),
+        },
+    };
+    const nextEntry = assetEntryPath(next.neurobook.assetType, next.name);
+    return {
+        entries: draft.entries.map((entry) => {
+            if (entry.path === "package.json") {
+                return {...entry, bytes: encodePackageJson(next)};
+            }
+            if (entry.path === previousEntry && previousEntry !== nextEntry) {
+                return {...entry, path: nextEntry};
+            }
+            return entry;
+        }),
+    };
+}
+
+/** 根据当前版本生成 patch/minor/major 建议版本。 */
+export function bumpDraftVersion(version: string, release: "patch" | "minor" | "major"): string | null {
+    return inc(version, release);
+}
+
+/** 更新单个文本文件内容。 */
+export function updateDraftFile(draft: PackageDraft, path: string, content: string): PackageDraft {
+    return {entries: draft.entries.map((entry) => entry.path === path ? {...entry, bytes: strToU8(content)} : entry)};
+}
+
+/** 新建文件或目录；非法或冲突时返回错误。 */
+export function addDraftEntry(draft: PackageDraft, entry: DraftEntry): {ok: true; draft: PackageDraft} | {ok: false; error: string} {
+    return normalizeDraftEntries([...draft.entries, entry]);
+}
+
+/** 重命名文件/目录；目录下全部后代同步改路径。 */
+export function renameDraftEntry(draft: PackageDraft, sourcePath: string, nextName: string): {ok: true; draft: PackageDraft} | {ok: false; error: string} {
+    const parent = parentPath(sourcePath);
+    const nextPath = parent ? `${parent}/${nextName}` : nextName;
+    const entries = draft.entries.map((entry) => entry.path === sourcePath || entry.path.startsWith(`${sourcePath}/`)
+        ? {...entry, path: `${nextPath}${entry.path.slice(sourcePath.length)}`}
+        : entry);
+    return normalizeDraftEntries(entries);
+}
+
+/** 删除文件或目录及其全部后代。 */
+export function deleteDraftEntry(draft: PackageDraft, path: string): PackageDraft {
+    return {entries: draft.entries.filter((entry) => entry.path !== path && !entry.path.startsWith(`${path}/`))};
+}
+
+/** 应用 nb-ui FileTree 的四种拖拽落点。 */
+export function moveDraftEntry(draft: PackageDraft, move: FileTreeMove): DraftMoveResult {
+    const source = draft.entries.find((entry) => entry.path === move.sourceId);
+    if (!source) {
+        return {ok: false, error: "待移动条目不存在"};
+    }
+    const targetParent = move.position === "root" || !move.targetId
+        ? ""
+        : move.position === "inside" ? move.targetId : parentPath(move.targetId);
+    if (source.kind === "directory" && (targetParent === source.path || targetParent.startsWith(`${source.path}/`))) {
+        return {ok: false, error: "目录不能移动到自身内部"};
+    }
+    const name = baseName(source.path);
+    const nextPath = targetParent ? `${targetParent}/${name}` : name;
+    if (nextPath === source.path) {
+        return {ok: true, draft, selectedPath: source.path};
+    }
+    const entries = draft.entries.map((entry) => entry.path === source.path || entry.path.startsWith(`${source.path}/`)
+        ? {...entry, path: `${nextPath}${entry.path.slice(source.path.length)}`}
+        : entry);
+    const normalized = normalizeDraftEntries(entries);
+    return normalized.ok ? {ok: true, draft: normalized.draft, selectedPath: nextPath} : normalized;
+}
+
+/** 把平面草稿构造成 nb-ui FileTree 节点。 */
+export function draftFileTree(draft: PackageDraft): FileTreeNode[] {
+    const nodes = new Map<string, FileTreeNode>();
+    for (const entry of [...draft.entries].sort((a, b) => a.path.localeCompare(b.path))) {
+        const parts = entry.path.split("/");
+        for (let index = 0; index < parts.length; index += 1) {
+            const path = parts.slice(0, index + 1).join("/");
+            const isLeaf = index === parts.length - 1;
+            if (!nodes.has(path)) {
+                nodes.set(path, {
+                    id: path,
+                    label: parts[index] ?? path,
+                    kind: isLeaf ? entry.kind : "directory",
+                    iconClass: isLeaf && entry.kind === "file" ? fileIcon(path) : undefined,
+                    children: [],
+                });
+            }
+        }
+    }
+    const roots: FileTreeNode[] = [];
+    for (const node of nodes.values()) {
+        const parent = nodes.get(parentPath(node.id));
+        (parent?.children ?? roots).push(node);
+    }
+    const sort = (items: FileTreeNode[]): void => {
+        items.sort((left, right) => left.kind === right.kind ? left.label.localeCompare(right.label) : left.kind === "directory" ? -1 : 1);
+        items.forEach((item) => sort(item.children ?? []));
+    };
+    sort(roots);
+    return roots;
+}
+
+/** 判断文件是否适合 UTF-8 文本编辑。 */
+export function isEditableText(entry?: DraftEntry): boolean {
+    if (!entry || entry.kind !== "file" || entry.bytes.byteLength > 1024 * 1024 || entry.bytes.includes(0)) {
+        return false;
+    }
+    const name = baseName(entry.path).toLowerCase();
+    const extension = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name;
+    return TEXT_EXTENSIONS.has(extension) || ["license", "readme", "changelog", "notice"].includes(name);
+}
+
+/** 推断 CodeMirror 高亮类型。 */
+export function editorLanguage(path: string): "tsx" | "markdown" | "plain" {
+    const lower = path.toLowerCase();
+    return lower.endsWith(".md") || lower.endsWith(".markdown") ? "markdown"
+        : /\.(?:ts|tsx|js|jsx|mjs|cjs|json|vue|css)$/.test(lower) ? "tsx" : "plain";
+}
+
+/** 统一校验路径、大小写冲突、父文件冲突和容量上限。 */
+function normalizeDraftEntries(entries: DraftEntry[], stripSingleRoot = false): {ok: true; draft: PackageDraft} | {ok: false; error: string} {
+    let working = entries.filter((entry) => entry.path.length > 0);
+    if (stripSingleRoot && working.length > 0) {
+        const roots = new Set(working.map((entry) => entry.path.split("/")[0]));
+        const root = [...roots][0];
+        if (roots.size === 1 && root && working.some((entry) => entry.path.includes("/"))) {
+            working = working
+                .filter((entry) => entry.path !== root)
+                .map((entry) => ({...entry, path: entry.path.slice(root.length + 1)}));
+        }
+    }
+    const explicitPaths = new Set(working.map((entry) => entry.path.toLowerCase()));
+    const syntheticDirectories: DraftEntry[] = [];
+    for (const entry of working) {
+        let parent = parentPath(entry.path);
+        while (parent) {
+            if (!explicitPaths.has(parent.toLowerCase())) {
+                explicitPaths.add(parent.toLowerCase());
+                syntheticDirectories.push({path: parent, kind: "directory", bytes: new Uint8Array()});
+            }
+            parent = parentPath(parent);
+        }
+    }
+    working = [...working, ...syntheticDirectories];
+    if (working.length > MAX_ENTRIES) {
+        return {ok: false, error: `文件数超过 ${MAX_ENTRIES} 个上限`};
+    }
+    let totalBytes = 0;
+    const seen = new Map<string, DraftEntry>();
+    const ordered = [...working].sort((left, right) => left.path.split("/").length - right.path.split("/").length);
+    for (const entry of ordered) {
+        const error = validateDraftPath(entry.path);
+        if (error) {
+            return {ok: false, error: `${entry.path}：${error}`};
+        }
+        const folded = entry.path.toLowerCase();
+        if (seen.has(folded)) {
+            return {ok: false, error: `路径与已有条目冲突：${entry.path}`};
+        }
+        let parent = parentPath(entry.path);
+        while (parent) {
+            if (seen.get(parent.toLowerCase())?.kind === "file") {
+                return {ok: false, error: `文件不能作为目录：${parent}`};
+            }
+            parent = parentPath(parent);
+        }
+        totalBytes += entry.kind === "file" ? entry.bytes.byteLength : 0;
+        if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
+            return {ok: false, error: "文件实际总量超过 100 MiB 上限"};
+        }
+        seen.set(folded, entry);
+    }
+    return {ok: true, draft: {entries: [...seen.values()].sort((left, right) => left.path.localeCompare(right.path))}};
+}
+
+/** 返回单个相对路径的用户可读错误；空串表示合法。 */
+function validateDraftPath(path: string): string {
+    if (!path || path.includes("\0") || path.includes("\\") || path.startsWith("/") || /^[A-Za-z]:/.test(path)) {
+        return "必须是使用 / 的相对路径";
+    }
+    const parts = path.split("/");
+    if (parts.some((part) => !part || part === "." || part === ".." || /[ .]$/.test(part) || WINDOWS_RESERVED.test(part))) {
+        return "包含空段、点段、保留名或尾随空格/点";
+    }
+    return "";
+}
+
+/** 宽松读取当前 package.json，供结构化控件修正一个暂时不完整的包。 */
+function parseDraftPackageLoosely(draft: PackageDraft): AgentAssetPackageJson | null {
+    const entry = draft.entries.find((candidate) => candidate.path === "package.json" && candidate.kind === "file");
+    if (!entry) {
+        return null;
+    }
+    try {
+        const raw: unknown = JSON.parse(new TextDecoder().decode(entry.bytes));
+        return isObject(raw) && isObject(raw.neurobook) ? raw as AgentAssetPackageJson : null;
+    } catch {
+        return null;
+    }
+}
+
+/** 生成便于手工阅读的 package.json 字节。 */
+function encodePackageJson(packageJson: AgentAssetPackageJson): Uint8Array {
+    return strToU8(`${JSON.stringify(packageJson, null, 4)}\n`);
+}
+
+/** JSON 对象守卫。 */
+function isObject(value: unknown): value is {[key: string]: unknown} {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 返回相对路径父目录。 */
+function parentPath(path: string): string {
+    return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+}
+
+/** 返回相对路径末段。 */
+function baseName(path: string): string {
+    return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** 依据常见扩展名选择文件图标。 */
+function fileIcon(path: string): string {
+    const lower = path.toLowerCase();
+    return lower.endsWith(".md") ? "i-lucide-file-text"
+        : /\.(?:ts|tsx|js|jsx|json)$/.test(lower) ? "i-lucide-file-code"
+            : /\.(?:png|jpe?g|gif|webp|svg)$/.test(lower) ? "i-lucide-image" : "i-lucide-file";
 }

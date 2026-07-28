@@ -5,6 +5,7 @@ import type {ItemVersionDto, WorkshopItemDto} from "../../../shared/dto/workshop
 
 // 条目详情：左主栏（头部 + 描述/版本/评论 Tab）+ 右侧 sticky 下载/操作侧栏。
 const route = useRoute();
+const router = useRouter();
 const api = useWorkshopApi();
 const {session} = useAuthState();
 const notification = useNotification();
@@ -24,13 +25,18 @@ const favorited = ref(false);
 const likeCount = ref(0);
 const commentCount = ref(0);
 
-const activeTab = ref<"desc" | "files" | "versions" | "comments">("desc");
+type DetailTab = "desc" | "files" | "versions" | "comments";
+const detailTabs: DetailTab[] = ["desc", "files", "versions", "comments"];
+const activeTab = ref<DetailTab>(detailTabs.includes(route.query.tab as DetailTab) ? route.query.tab as DetailTab : "desc");
 // 「文件」Tab 首次访问才挂载 PackageFileBrowser（懒加载，切走后保留状态）
-const filesVisited = ref(false);
+const filesVisited = ref(activeTab.value === "files");
 watch(activeTab, (tab) => {
     if (tab === "files") {
         filesVisited.value = true;
     }
+});
+watch(() => route.query.tab, (tab) => {
+    activeTab.value = detailTabs.includes(tab as DetailTab) ? tab as DetailTab : "desc";
 });
 const tabOptions = computed<SegmentedControlOption[]>(() => [
     {label: "描述", value: "desc"},
@@ -39,6 +45,15 @@ const tabOptions = computed<SegmentedControlOption[]>(() => [
     {label: "版本", value: "versions", count: versions.value.length},
     {label: "评论", value: "comments", count: commentCount.value},
 ]);
+
+/** 切换详情分区并把状态写入 URL；离开文件分区时清理包路径参数。 */
+async function selectTab(value: SegmentedControlValue): Promise<void> {
+    const tab = value as DetailTab;
+    await router.push({
+        path: route.path,
+        query: tab === "files" ? {...route.query, tab} : {tab},
+    });
+}
 
 // 下载按钮点击反馈：短暂切换文案，让用户确认点击已生效
 const downloadFlash = ref(false);
@@ -229,7 +244,7 @@ onMounted(load);
 
             <!-- Tab 切换 -->
             <div class="mt-5">
-                <SegmentedControl :model-value="activeTab" :options="tabOptions" aria-label="详情分区" @update:model-value="(value: SegmentedControlValue) => activeTab = value as 'desc' | 'files' | 'versions' | 'comments'" />
+                <SegmentedControl :model-value="activeTab" :options="tabOptions" aria-label="详情分区" @update:model-value="selectTab" />
             </div>
 
             <!-- Tab 内容 -->
@@ -242,7 +257,7 @@ onMounted(load);
 
                 <!-- 包内容在线预览（首次切入才挂载） -->
                 <div v-show="activeTab === 'files'">
-                    <PackageFileBrowser v-if="filesVisited" :slug="slug" />
+                    <PackageFileBrowser v-if="filesVisited" :slug="slug" :versions="versions" />
                 </div>
 
                 <!-- 版本历史 -->

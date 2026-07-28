@@ -12,7 +12,7 @@ export default defineEventHandler(async (event): Promise<Buffer> => {
     const query = validateQuery(event, DownloadQuerySchema);
     const version = await resolveItemVersion(item, query.version);
 
-    const bytes = await readVersionZip(item.id, version.version);
+    const bytes = await readVersionZip(item.id, version.ordinal);
     await prisma.workshopItem.update({where: {id: item.id}, data: {downloadCount: {increment: 1}}});
 
     setHeader(event, "Content-Type", "application/zip");

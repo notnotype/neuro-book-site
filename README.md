@@ -4,6 +4,25 @@ NeuroBook 官方站，提供账号关联、创意工坊和客户端加密云备�
 
 技术栈为 Nuxt 4 SPA、Nitro API、Prisma 7/libSQL SQLite 和本地持久文件。生产环境只运行一个应用实例；数据库、工坊压缩包和云备份必须位于同一台主机的持久目录。
 
+## Agent 资产包
+
+Workshop 统一发布 Skill、Workflow 和 Profile。三类资产都以根 `package.json` 为协议真相源，公开版本使用 SemVer：
+
+```json
+{
+    "name": "example-asset",
+    "version": "1.2.3",
+    "type": "module",
+    "neurobook": {
+        "schemaVersion": 1,
+        "assetType": "skill",
+        "minAppVersion": "0.8.0"
+    }
+}
+```
+
+固定入口为 Skill `SKILL.md`、Workflow `workflow.ts`、Profile `<name>.profile.tsx`。Workflow 不允许声明依赖或使用 `import` / `require`；站点只做静态结构检查，不执行包内代码。详情页可以按版本和路径浏览包文件，发布页在浏览器内编辑完整包。
+
 ## 本地开发
 
 依赖已固定到公开 Git commit，不需要 sibling `nb-ui` 或 Bun link。
@@ -29,6 +48,15 @@ bun run test
 ```
 
 测试包含真实 build 产物启动、生产配置 fail-closed、私有模式、设备码、Workshop 上传边界、加密备份格式、容量与限频。
+
+旧整数版本与 `nbook-package.json` 的迁移命令默认只报告，不写数据：
+
+```powershell
+bun run db:migrate:agent-assets
+bun run db:migrate:agent-assets -- --apply
+```
+
+必须先应用 `20260728090000_agent_asset_package` 数据库 migration，再执行包迁移。生产环境需要停站、冷快照和单独维护授权，具体顺序见部署文档；不要在当前线上容器直接试跑。
 
 ## 生产部署
 

@@ -326,7 +326,7 @@ describe("Passport 设备授权流", () => {
         form.append("file", new Blob([zip as BlobPart], {type: "application/zip"}), "pkg.zip");
         const uploaded = await api(`/api/v1/items/${item.slug}/versions`, {token, form});
         expect(uploaded.status).toBe(200);
-        expect(((await uploaded.json()) as ItemVersionDto).version).toBe(1);
+        expect(((await uploaded.json()) as ItemVersionDto).version).toBe("1.0.0");
 
         const mine = await api("/api/v1/me/items", {token});
         expect(mine.status).toBe(200);

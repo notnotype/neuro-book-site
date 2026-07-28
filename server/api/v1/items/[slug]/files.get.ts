@@ -14,7 +14,7 @@ export default defineEventHandler(async (event): Promise<PackageFileListDto> => 
     const query = validateQuery(event, DownloadQuerySchema);
     const version = await resolveItemVersion(item, query.version);
 
-    const bytes = await readVersionZip(item.id, version.version);
+    const bytes = await readVersionZip(item.id, version.ordinal);
     const files = listPackageEntries(new Uint8Array(bytes))
         .map((entry) => ({...entry, previewable: isPreviewableFile(entry.path, entry.size)}))
         .sort((a, b) => a.path.localeCompare(b.path));

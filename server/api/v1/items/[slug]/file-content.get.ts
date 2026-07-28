@@ -14,7 +14,7 @@ export default defineEventHandler(async (event): Promise<PackageFileContentDto> 
     const query = validateQuery(event, PackageFileContentQuerySchema);
     const version = await resolveItemVersion(item, query.version);
 
-    const bytes = await readVersionZip(item.id, version.version);
+    const bytes = await readVersionZip(item.id, version.ordinal);
     const data = readPackageEntry(new Uint8Array(bytes), query.path);
     if (!data) {
         throw createError({statusCode: 404, message: "包内不存在该文件"});

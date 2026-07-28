@@ -1,27 +1,41 @@
 import type {H3Event} from "h3";
 import {createError, getQuery} from "h3";
+import {valid} from "semver";
 import {z} from "zod";
+import {AGENT_ASSET_PACKAGE_SCHEMA_VERSION, AGENT_ASSET_TYPES} from "../../shared/agent-asset-package";
 
 // Workshop 请求校验 schema。输出 DTO 纯类型见 shared/dto/workshop.dto.ts。
 
-// kebab-case：小写字母/数字段用单个连字符连接（与 88 文档 manifest 约定一致）
-const kebabCasePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// kebab-case：小写字母/数字段用单个连字符连接。
+export const kebabCasePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-// 资产包 manifest（zip 根部 nbook-package.json）
-export const PackageManifestSchema = z.object({
-    manifestVersion: z.literal(1, "manifestVersion 必须为 1"),
-    type: z.enum(["skill", "profile"], "type 必须是 skill 或 profile"),
+/** 只接受 canonical SemVer，不接受 v1.2.3、=1.2.3 等宽松写法。 */
+export const SemVerStringSchema = z.string().trim().refine((value) => valid(value) === value, "必须是合法 SemVer");
+
+// 资产包根 package.json；passthrough 保留 Skill 的 scripts/bin 等标准 npm 字段。
+export const AgentAssetPackageSchema = z.object({
     name: z.string().regex(kebabCasePattern, "name 必须是 kebab-case（小写字母/数字/连字符）"),
-    version: z.number().int("version 必须是整数").positive("version 必须是正整数"),
-    minAppVersion: z.string().trim().min(1).max(50).optional(),
-});
+    version: SemVerStringSchema,
+    type: z.literal("module", "type 必须是 module"),
+    neurobook: z.object({
+        schemaVersion: z.literal(AGENT_ASSET_PACKAGE_SCHEMA_VERSION, "neurobook.schemaVersion 必须为 1"),
+        assetType: z.enum(AGENT_ASSET_TYPES, "neurobook.assetType 必须是 skill、workflow 或 profile"),
+        minAppVersion: SemVerStringSchema.optional(),
+    }),
+    dependencies: z.record(z.string(), z.string()).optional(),
+    devDependencies: z.record(z.string(), z.string()).optional(),
+    peerDependencies: z.record(z.string(), z.string()).optional(),
+    optionalDependencies: z.record(z.string(), z.string()).optional(),
+    bin: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
+    scripts: z.record(z.string(), z.string()).optional(),
+}).passthrough();
 
-export type PackageManifest = z.infer<typeof PackageManifestSchema>;
+export type AgentAssetPackage = z.infer<typeof AgentAssetPackageSchema>;
 
 // 创建条目（元数据；安装名 name 在首版上传时从 manifest 落库）
 export const CreateItemRequestSchema = z.object({
     slug: z.string().trim().min(3, "slug 至少 3 个字符").max(64).regex(kebabCasePattern, "slug 必须是 kebab-case（小写字母/数字/连字符）"),
-    type: z.enum(["skill", "profile"], "type 必须是 skill 或 profile"),
+    type: z.enum(AGENT_ASSET_TYPES, "type 必须是 skill、workflow 或 profile"),
     title: z.string().trim().min(1, "标题不能为空").max(120),
     summary: z.string().trim().max(300).default(""),
     description: z.string().max(50_000).default(""),
@@ -52,7 +66,7 @@ export type PageQuery = z.infer<typeof PageQuerySchema>;
 // 公开条目列表查询；tags 为逗号分隔多值，匹配任意一个即命中；featured=1 只取精选
 export const ListItemsQuerySchema = PageQuerySchema.extend({
     q: z.string().trim().max(100).optional(),
-    type: z.enum(["skill", "profile"]).optional(),
+    type: z.enum(AGENT_ASSET_TYPES).optional(),
     tags: z
         .string()
         .trim()
@@ -70,12 +84,12 @@ export type ListItemsQuery = z.infer<typeof ListItemsQuerySchema>;
 
 // 下载查询：version 缺省表示最新版
 export const DownloadQuerySchema = z.object({
-    version: z.coerce.number().int().positive().optional(),
+    version: SemVerStringSchema.optional(),
 });
 
 // 包内文件内容预览查询：path 是 zip 内相对路径（对象键查找，天然无路径穿越）
 export const PackageFileContentQuerySchema = z.object({
-    version: z.coerce.number().int().positive().optional(),
+    version: SemVerStringSchema.optional(),
     path: z.string().min(1, "缺少 path 参数").max(500),
 });
 

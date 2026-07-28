@@ -1,113 +1,106 @@
-import {strToU8, unzipSync, zipSync} from "fflate";
+import {strToU8, zipSync} from "fflate";
 import {describe, expect, it} from "vitest";
-import {buildUploadFile, parseCanonicalZip, validateSource, type ContentSource} from "../app/utils/workshop-package";
+import {
+    addDraftEntry,
+    buildDraftZip,
+    bumpDraftVersion,
+    createPackageDraft,
+    deleteDraftEntry,
+    draftFromZip,
+    mergeDraftEntries,
+    moveDraftEntry,
+    parseDraftPackage,
+    renameDraftEntry,
+    updateDraftFile,
+    updateDraftPackage,
+} from "../app/utils/workshop-package";
 import {parseWorkshopPackage} from "../server/utils/workshop-package";
 
-// 前端资产打包工具单测：核心契约是「客户端友好输入 → 打成的 canonical zip 必须被后端
-// parseWorkshopPackage 接受」。跨端复用后端 util 做交叉校验，防止前端生成的包后端不认。
-
-/** 取出打包结果字节，失败直接抛，便于断言。 */
-async function fileBytes(result: ReturnType<typeof buildUploadFile>): Promise<Uint8Array> {
-    if (!result.ok) {
-        throw new Error(`打包失败：${result.error}`);
-    }
-    return new Uint8Array(await result.file.arrayBuffer());
-}
-
-describe("buildUploadFile → 后端可解析", () => {
-    it("profile 在线编辑：生成 <name>.profile.tsx + manifest，后端接受", async () => {
-        const source: ContentSource = {kind: "profile", bytes: strToU8("export const profileManifest = {};")};
-        const bytes = await fileBytes(buildUploadFile(source, {slug: "my-writer", name: "my-writer", version: 1}));
-        // 后端交叉校验
-        const parsed = parseWorkshopPackage(bytes);
-        expect(parsed.manifest).toEqual({manifestVersion: 1, type: "profile", name: "my-writer", version: 1});
-        expect(parsed.entryNames).toContain("my-writer.profile.tsx");
-    });
-
-    it("profile 单文件字节：入口按 name 命名，绕开原文件名", async () => {
-        // 模拟用户上传名为 leader.default.profile.tsx 的文件字节，平台按 slug 重命名入口
-        const source: ContentSource = {kind: "profile", bytes: strToU8("// tsx")};
-        const bytes = await fileBytes(buildUploadFile(source, {slug: "renamed", name: "renamed", version: 2}));
-        const entries = unzipSync(bytes);
-        expect(Object.keys(entries)).toContain("renamed.profile.tsx");
-        expect(Object.keys(entries)).not.toContain("leader.default.profile.tsx");
-    });
-
-    it("skill 在线编辑：生成 SKILL.md + manifest，后端接受，可选 minAppVersion 落入", async () => {
-        const source: ContentSource = {kind: "skill", bytes: strToU8("# demo\n"), isDirZip: false};
-        const bytes = await fileBytes(buildUploadFile(source, {slug: "demo-skill", name: "demo-skill", version: 1, minAppVersion: "0.5.0"}));
-        const parsed = parseWorkshopPackage(bytes);
-        expect(parsed.manifest.type).toBe("skill");
-        expect(parsed.manifest.minAppVersion).toBe("0.5.0");
-        expect(parsed.entryNames).toContain("SKILL.md");
-    });
-
-    it("skill 目录 zip：剥离单层顶层文件夹并注入 manifest，保留子文件", async () => {
-        // Windows 右键压缩「文件夹」的典型形态：my-skill/ 前缀
-        const dirZip = zipSync({
-            "my-skill/SKILL.md": strToU8("# my-skill\n"),
-            "my-skill/reference/notes.md": strToU8("notes"),
-        });
-        const source: ContentSource = {kind: "skill", bytes: dirZip, isDirZip: true};
-        const bytes = await fileBytes(buildUploadFile(source, {slug: "my-skill", name: "my-skill", version: 1}));
-        const entries = unzipSync(bytes);
-        // SKILL.md 回到根部、manifest 注入、子文件前缀剥离
-        expect(Object.keys(entries)).toContain("SKILL.md");
-        expect(Object.keys(entries)).toContain("reference/notes.md");
-        expect(Object.keys(entries)).toContain("nbook-package.json");
-        expect(Object.keys(entries)).not.toContain("my-skill/SKILL.md");
-        // 后端接受
-        expect(parseWorkshopPackage(bytes).manifest.name).toBe("my-skill");
-    });
-
-    it("skill 目录 zip：覆盖用户自带的旧 manifest（表单为真相源）", async () => {
-        const dirZip = zipSync({
-            "SKILL.md": strToU8("# x\n"),
-            "nbook-package.json": strToU8(JSON.stringify({manifestVersion: 1, type: "skill", name: "stale", version: 99})),
-        });
-        const source: ContentSource = {kind: "skill", bytes: dirZip, isDirZip: true};
-        const bytes = await fileBytes(buildUploadFile(source, {slug: "fresh", name: "fresh", version: 1}));
-        expect(parseWorkshopPackage(bytes).manifest).toEqual({manifestVersion: 1, type: "skill", name: "fresh", version: 1});
-    });
-
-    it("skill 目录 zip 缺 SKILL.md：打包失败并给出可读错误", () => {
-        const dirZip = zipSync({"README.md": strToU8("no entry")});
-        const source: ContentSource = {kind: "skill", bytes: dirZip, isDirZip: true};
-        const result = buildUploadFile(source, {slug: "x", name: "x", version: 1});
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-            expect(result.error).toMatch(/SKILL\.md/);
+describe("资产包浏览器草稿", () => {
+    it("三类模板都能生成后端接受的统一包", () => {
+        for (const assetType of ["skill", "workflow", "profile"] as const) {
+            const draft = createPackageDraft(assetType, `demo-${assetType}`);
+            const built = buildDraftZip(draft, `demo-${assetType}`);
+            expect(built.ok).toBe(true);
+            if (!built.ok) continue;
+            expect(parseWorkshopPackage(built.bytes).packageJson.neurobook.assetType).toBe(assetType);
         }
     });
 
-    it("advanced 完整包：原样透传，不重打包", async () => {
-        const canonical = zipSync({
-            "nbook-package.json": strToU8(JSON.stringify({manifestVersion: 1, type: "skill", name: "as-is", version: 5})),
-            "SKILL.md": strToU8("# as-is\n"),
+    it("新建、改名、移动和删除会保持树结构合法", () => {
+        let draft = createPackageDraft("skill", "demo-skill");
+        const directory = addDraftEntry(draft, {path: "references", kind: "directory", bytes: new Uint8Array()});
+        expect(directory.ok).toBe(true);
+        if (!directory.ok) return;
+        draft = directory.draft;
+
+        const file = addDraftEntry(draft, {path: "notes.md", kind: "file", bytes: strToU8("notes")});
+        expect(file.ok).toBe(true);
+        if (!file.ok) return;
+        draft = file.draft;
+
+        const moved = moveDraftEntry(draft, {sourceId: "notes.md", targetId: "references", position: "inside"});
+        expect(moved.ok).toBe(true);
+        if (!moved.ok) return;
+        expect(moved.selectedPath).toBe("references/notes.md");
+        expect(moved.draft.entries.some((entry) => entry.path === "references/notes.md")).toBe(true);
+
+        const renamed = renameDraftEntry(moved.draft, "references", "docs");
+        expect(renamed.ok).toBe(true);
+        if (!renamed.ok) return;
+        expect(renamed.draft.entries.some((entry) => entry.path === "docs/notes.md")).toBe(true);
+        expect(deleteDraftEntry(renamed.draft, "docs").entries.some((entry) => entry.path.startsWith("docs"))).toBe(false);
+    });
+
+    it("拒绝目录移动到自身、保留大小写冲突并要求显式覆盖", () => {
+        const withDirectory = addDraftEntry(createPackageDraft("skill", "demo-skill"), {path: "docs/inside", kind: "directory", bytes: new Uint8Array()});
+        expect(withDirectory.ok).toBe(true);
+        if (!withDirectory.ok) return;
+        expect(moveDraftEntry(withDirectory.draft, {sourceId: "docs", targetId: "docs/inside", position: "inside"})).toMatchObject({ok: false});
+
+        const imported = [{path: "skill.md", kind: "file" as const, bytes: strToU8("replace")}];
+        const blocked = mergeDraftEntries(withDirectory.draft, imported, false);
+        expect(blocked.ok).toBe(true);
+        if (!blocked.ok) return;
+        expect(blocked.conflicts).toEqual(["skill.md"]);
+        const overwritten = mergeDraftEntries(withDirectory.draft, imported, true);
+        expect(overwritten.ok).toBe(true);
+        if (!overwritten.ok) return;
+        expect(overwritten.conflicts).toEqual(["skill.md"]);
+        expect(new TextDecoder().decode(overwritten.draft.entries.find((entry) => entry.path.toLowerCase() === "skill.md")?.bytes)).toBe("replace");
+    });
+
+    it("目录 ZIP 与完整包可导入，二进制字节保持不变", () => {
+        const bytes = zipSync({
+            "demo/package.json": strToU8(JSON.stringify({name: "demo-skill", version: "1.0.0", type: "module", neurobook: {schemaVersion: 1, assetType: "skill"}})),
+            "demo/SKILL.md": strToU8("# demo"),
+            "demo/media/icon.png": new Uint8Array([0, 1, 2, 255]),
         });
-        const parsed = parseCanonicalZip(canonical);
+        const directory = draftFromZip(bytes, true);
+        expect(directory.ok).toBe(true);
+        if (!directory.ok) return;
+        expect(directory.draft.entries.find((entry) => entry.path === "media/icon.png")?.bytes).toEqual(new Uint8Array([0, 1, 2, 255]));
+        expect(parseDraftPackage(directory.draft).ok).toBe(true);
+    });
+
+    it("结构化更新 package.json 保留作者字段并支持 SemVer bump", () => {
+        let draft = createPackageDraft("skill", "demo-skill", "1.2.3");
+        const packageEntry = draft.entries.find((entry) => entry.path === "package.json")!;
+        const enriched = JSON.parse(new TextDecoder().decode(packageEntry.bytes)) as {scripts?: {check: string}};
+        enriched.scripts = {check: "bun test"};
+        draft = updateDraftFile(draft, "package.json", `${JSON.stringify(enriched, null, 4)}\n`);
+        draft = updateDraftPackage(draft, {version: bumpDraftVersion("1.2.3", "minor") ?? ""});
+        const parsed = parseDraftPackage(draft);
         expect(parsed.ok).toBe(true);
         if (!parsed.ok) return;
-        const file = new File([canonical as BlobPart], "as-is.zip", {type: "application/zip"});
-        const source: ContentSource = {kind: "advanced", file, parsed: parsed.manifest};
-        const result = buildUploadFile(source, {slug: "as-is", name: "ignored", version: 999});
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-            expect(result.file).toBe(file); // 同一个 File 引用，未重打包
-        }
-    });
-});
-
-describe("validateSource 即时校验", () => {
-    it("空 profile / 空 SKILL.md 判为无效", () => {
-        expect(validateSource({kind: "profile", bytes: new Uint8Array()}).ok).toBe(false);
-        expect(validateSource({kind: "skill", bytes: new Uint8Array(), isDirZip: false}).ok).toBe(false);
+        expect(parsed.packageJson.version).toBe("1.3.0");
+        expect(parsed.packageJson.scripts).toEqual({check: "bun test"});
     });
 
-    it("目录 zip 含/缺 SKILL.md 分别判有效/无效（支持单层文件夹剥离）", () => {
-        const good = zipSync({"pack/SKILL.md": strToU8("# ok")});
-        const bad = zipSync({"pack/README.md": strToU8("no")});
-        expect(validateSource({kind: "skill", bytes: good, isDirZip: true}).ok).toBe(true);
-        expect(validateSource({kind: "skill", bytes: bad, isDirZip: true}).ok).toBe(false);
+    it("500 条目和危险路径在浏览器侧直接拒绝", () => {
+        const draft = createPackageDraft("skill", "demo-skill");
+        expect(addDraftEntry(draft, {path: "CON.txt", kind: "file", bytes: strToU8("bad")})).toMatchObject({ok: false});
+        const many = Array.from({length: 501}, (_, index) => ({path: `files/${index}.txt`, kind: "file" as const, bytes: strToU8("x")}));
+        expect(mergeDraftEntries(draft, many, true)).toMatchObject({ok: false, error: expect.stringMatching(/500/)});
     });
 });

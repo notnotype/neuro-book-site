@@ -77,7 +77,7 @@ async function onUserMenu(value: string): Promise<void> {
             <form class="mx-auto flex w-full max-w-md items-center" @submit.prevent="submitSearch">
                 <div class="relative w-full">
                     <span class="i-lucide-search pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"></span>
-                    <input v-model="keyword" type="search" placeholder="搜索 skill / profile…" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-sm text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)] focus:shadow-[0_0_0_3px_var(--accent-bg)]" />
+                    <input v-model="keyword" type="search" placeholder="搜索 Skill / Workflow / Profile…" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-sm text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)] focus:shadow-[0_0_0_3px_var(--accent-bg)]" />
                 </div>
             </form>
 

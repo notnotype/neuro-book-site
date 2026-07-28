@@ -3,7 +3,7 @@ import {prisma} from "../../../../database/prisma";
 import {requirePublishedItem, requireSlugParam, toVersionDto} from "../../../../utils/workshop";
 
 /**
- * 版本历史：公开可见，按 version 倒序返回全部版本。
+ * 版本历史：公开可见，按内部发布序号倒序返回全部版本。
  */
 export default defineEventHandler(async (event): Promise<ItemVersionDto[]> => {
     const slug = requireSlugParam(event);
@@ -11,7 +11,7 @@ export default defineEventHandler(async (event): Promise<ItemVersionDto[]> => {
 
     const versions = await prisma.itemVersion.findMany({
         where: {itemId: item.id},
-        orderBy: {version: "desc"},
+        orderBy: {ordinal: "desc"},
     });
 
     return versions.map(toVersionDto);

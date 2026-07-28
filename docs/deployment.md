@@ -127,6 +127,18 @@ curl --fail --silent http://127.0.0.1:3100/api/health/ready
 
 镜像回滚只需恢复旧 digest 并再次 `pull/up`。如果新版本已经执行不兼容 migration，必须停止容器、保留失败现场，并从对应冷快照整体恢复 `data/`；禁止只替换 SQLite 而保留新版本文件目录。
 
+### Agent 资产协议迁移
+
+包含 `20260728090000_agent_asset_package` 的版本不能沿用普通自动升级流程。该 migration 会把公开整数版本映射为 SemVer，并保留原整数作为 ZIP 寻址 ordinal；随后还必须原子迁移磁盘上的旧 `nbook-package.json`。本 Task 只交付工具，不授权生产执行。后续维护窗口应固定为：
+
+1. 停止站点并制作整份 `data/` 冷快照。
+2. 用新镜像的一次性容器执行 `prisma migrate deploy`，但不启动 Nitro。
+3. 运行 `node /app/dist/migrate-agent-assets.mjs` dry-run，逐行核对候选数量。
+4. 运行同一命令并加 `--apply`；确认所有候选的 `packageSchemaVersion` 都为 1，且重复 dry-run 报告 0 个版本。
+5. 启动新镜像，验收旧版下载、文件预览、Workflow 发布和 readiness。
+
+任一步失败都停止继续，保留日志并从同一份冷快照整体恢复数据库与 Workshop ZIP。迁移工具使用同目录临时文件和原子替换；单条数据库更新失败会恢复原 ZIP，但这不能替代升级级别的冷快照。
+
 ## 快速推送并升级 DMIT
 
 仓库提供本地编排命令。它只部署已经提交且工作区干净的 `master`，不会自动创建 commit：

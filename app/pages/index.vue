@@ -28,7 +28,7 @@ const filters = computed(() => {
     const rawTags = route.query.tags;
     const q = typeof rawQ === "string" ? rawQ : "";
     // 直接落到字面量，避免依赖 route.query 联合类型的收窄
-    const type: WorkshopItemType | undefined = rawType === "skill" ? "skill" : rawType === "profile" ? "profile" : undefined;
+    const type: WorkshopItemType | undefined = rawType === "skill" ? "skill" : rawType === "workflow" ? "workflow" : rawType === "profile" ? "profile" : undefined;
     const sort: "latest" | "downloads" | "likes" = rawSort === "downloads" ? "downloads" : rawSort === "likes" ? "likes" : "latest";
     const tags = typeof rawTags === "string" && rawTags.length > 0
         ? rawTags.split(",").map((tag) => tag.trim()).filter(Boolean)
@@ -71,6 +71,7 @@ async function loadSections(): Promise<void> {
 const typeOptions: SegmentedControlOption[] = [
     {label: "全部", value: ""},
     {label: "Skill", value: "skill"},
+    {label: "Workflow", value: "workflow"},
     {label: "Profile", value: "profile"},
 ];
 

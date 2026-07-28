@@ -1,5 +1,7 @@
 # NeuroBook Workshop — Web UI / UX 设计与实现 walkthrough
 
+> 本文记录早期整数版本与 `nbook-package.json` 阶段的历史过程。当前 Skill / Workflow / Profile 统一包协议、SemVer、文件浏览和发布工作台以 [Task 01](../01-agent-asset-workbench/README.md) 为准。
+
 Phase 1 后端已建成（见 `PROJECT-STATUS.md` 与 neuro-book `docs/tasks/88-workshop-platform/README.md`）。本文件是 **Web 前端**的设计规范 + 持续 walkthrough。设计真相源仍是 neuro-book 88 文档的 Web 页面节；本文件在其上补充落地级交互与状态细节。
 
 ## 已定设计决策（2026-07-05，用户经预览选定）

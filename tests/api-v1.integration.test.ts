@@ -178,7 +178,8 @@ describe("API v1 主体流程", () => {
         const meta = (await response.json()) as WorkshopMetaDto;
         expect(meta.platform).toBe("neuro-book-site");
         expect(meta.platformVersion).toMatch(/^\d+\.\d+\.\d+/);
-        expect(meta.itemTypes).toEqual(["skill", "profile"]);
+        expect(meta.packageSchemaVersion).toBe(1);
+        expect(meta.itemTypes).toEqual(["skill", "workflow", "profile"]);
     });
 
     it("admin 登录并签发不限次数注册码", async () => {
@@ -244,32 +245,32 @@ describe("API v1 主体流程", () => {
         expect(duplicated.status).toBe(409);
     });
 
-    it("上传 skill 首版：sha256 落库、安装名从 manifest 落库", async () => {
+    it("上传 skill 首版：sha256 落库、安装名从 package.json 落库", async () => {
         skillZipV1 = buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 1}, skillEntries);
         const uploaded = await api(`/api/v1/items/${skillSlug}/versions`, {jar: authorJar, form: uploadForm(skillZipV1, "首个版本")});
         expect(uploaded.status).toBe(200);
         const version = (await uploaded.json()) as ItemVersionDto;
-        expect(version.version).toBe(1);
+        expect(version.version).toBe("1.0.0");
         expect(version.sha256).toBe(sha256Hex(skillZipV1));
         expect(version.fileSize).toBe(skillZipV1.byteLength);
 
         const detail = await api(`/api/v1/items/${skillSlug}`);
         const item = (await detail.json()) as WorkshopItemDto;
         expect(item.name).toBe("stop-slop");
-        expect(item.latestVersion).toBe(1);
+        expect(item.latestVersion).toBe("1.0.0");
     });
 
-    it("上传拒绝用例：缺 manifest / version 不递增 / name 变更 / type 不一致 / 非作者", async () => {
+    it("上传拒绝用例：缺 package.json / version 不递增 / name 变更 / type 不一致 / 非作者", async () => {
         const noManifest = await api(`/api/v1/items/${skillSlug}/versions`, {jar: authorJar, form: uploadForm(buildPackageZip(null, skillEntries))});
         expect(noManifest.status).toBe(400);
-        expect(((await noManifest.json()) as {message?: string}).message).toContain("缺少 nbook-package.json");
+        expect(((await noManifest.json()) as {message?: string}).message).toContain("缺少 package.json");
 
         const sameVersion = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
             form: uploadForm(buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 1}, skillEntries)),
         });
         expect(sameVersion.status).toBe(400);
-        expect(((await sameVersion.json()) as {message?: string}).message).toContain("请把 manifest version 改为 2");
+        expect(((await sameVersion.json()) as {message?: string}).message).toContain("严格大于当前最新版本 1.0.0");
 
         const renamed = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
@@ -283,7 +284,7 @@ describe("API v1 主体流程", () => {
             form: uploadForm(buildPackageZip({manifestVersion: 1, type: "profile", name: "stop-slop", version: 2}, {"stop-slop.profile.tsx": skillEntries["SKILL.md"] ?? new Uint8Array()})),
         });
         expect(wrongType.status).toBe(400);
-        expect(((await wrongType.json()) as {message?: string}).message).toContain("与条目类型（skill）不一致");
+        expect(((await wrongType.json()) as {message?: string}).message).toContain("assetType（profile）与条目类型（skill）不一致");
 
         const notOwner = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: readerJar,
@@ -333,7 +334,7 @@ describe("API v1 主体流程", () => {
         expect(byQuery.total).toBe(1);
 
         const versions = (await (await api(`/api/v1/items/${skillSlug}/versions`)).json()) as ItemVersionDto[];
-        expect(versions.map((version) => version.version)).toEqual([2, 1]);
+        expect(versions.map((version) => version.version)).toEqual(["2.0.0", "1.0.0"]);
 
         const author = (await (await api("/api/v1/users/author1")).json()) as PublicUserDto;
         expect(author.items).toHaveLength(2);
@@ -348,17 +349,17 @@ describe("API v1 主体流程", () => {
 
         // 解压对比：条目集合与 SKILL.md 字节与原始 fixture 完全一致
         const unzipped = unzipSync(latestBytes);
-        const expectedNames = [...Object.keys(skillEntries), "nbook-package.json"].sort();
+        const expectedNames = [...Object.keys(skillEntries), "package.json"].sort();
         expect(Object.keys(unzipped).sort()).toEqual(expectedNames);
         expect(Buffer.from(unzipped["SKILL.md"] ?? new Uint8Array())).toEqual(Buffer.from(skillEntries["SKILL.md"] ?? new Uint8Array()));
 
-        const pinned = await api(`/api/v1/items/${skillSlug}/download?version=1`);
+        const pinned = await api(`/api/v1/items/${skillSlug}/download?version=1.0.0`);
         expect(sha256Hex(new Uint8Array(await pinned.arrayBuffer()))).toBe(sha256Hex(skillZipV1));
 
         const profileDownload = await api(`/api/v1/items/${profileSlug}/download`);
         expect(sha256Hex(new Uint8Array(await profileDownload.arrayBuffer()))).toBe(sha256Hex(profileZipV1));
 
-        const missing = await api(`/api/v1/items/${skillSlug}/download?version=99`);
+        const missing = await api(`/api/v1/items/${skillSlug}/download?version=99.0.0`);
         expect(missing.status).toBe(404);
 
         const detail = (await (await api(`/api/v1/items/${skillSlug}`)).json()) as WorkshopItemDto;
@@ -485,6 +486,11 @@ describe("API v1 主体流程", () => {
         expect(mine.total).toBe(2);
         expect(mine.items.find((item) => item.slug === skillSlug)?.status).toBe("unlisted");
 
+        const source = await api(`/api/v1/me/items/${skillSlug}/package?version=1.0.0`, {jar: authorJar});
+        expect(source.status).toBe(200);
+        expect(sha256Hex(new Uint8Array(await source.arrayBuffer()))).toBe(sha256Hex(skillZipV1));
+        expect((await api(`/api/v1/me/items/${skillSlug}/package`, {jar: readerJar})).status).toBe(403);
+
         // 各看各的：reader 名下无条目
         const readerItems = (await (await api("/api/v1/me/items", {jar: readerJar})).json()) as PageDto<WorkshopItemDto>;
         expect(readerItems.total).toBe(0);
@@ -511,6 +517,9 @@ describe("API v1 主体流程", () => {
             form: uploadForm(buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 3}, skillEntries)),
         });
         expect(uploadAttempt.status).toBe(403);
+
+        // 作者仍能读取 removed 资产源包，便于在工作台修订后等待管理员恢复。
+        expect((await api(`/api/v1/me/items/${skillSlug}/package`, {jar: authorJar})).status).toBe(200);
 
         // 普通用户不能调用 admin 状态接口
         const readerAttempt = await api(`/api/v1/admin/items/${skillItemId}/status`, {method: "PATCH", jar: readerJar, json: {status: "published"}});
@@ -560,7 +569,7 @@ describe("API v1 主体流程", () => {
         expect(created.sha256).toBe(sha256Hex(winner.zip));
 
         // 磁盘字节必须与库内记录对应同一次上传（修复前并发覆盖会导致不一致）
-        const downloaded = new Uint8Array(await (await api(`/api/v1/items/${skillSlug}/download?version=3`)).arrayBuffer());
+        const downloaded = new Uint8Array(await (await api(`/api/v1/items/${skillSlug}/download?version=3.0.0`)).arrayBuffer());
         expect(sha256Hex(downloaded)).toBe(created.sha256);
     });
 
@@ -593,14 +602,14 @@ describe("API v1 主体流程", () => {
         const filesRes = await api(`/api/v1/items/${skillSlug}/files`);
         expect(filesRes.status).toBe(200);
         const fileList = (await filesRes.json()) as PackageFileListDto;
-        expect(fileList.version).toBe(3); // 缺省取最新版（并发用例后最新为 v3）
+        expect(fileList.version).toBe("3.0.0"); // 缺省取最新版（并发用例后最新为 v3）
         const paths = fileList.files.map((file) => file.path);
         expect(paths).toContain("SKILL.md");
-        expect(paths).toContain("nbook-package.json");
+        expect(paths).toContain("package.json");
         expect(fileList.files.find((file) => file.path === "SKILL.md")?.previewable).toBe(true);
 
         // 指定版本读文本：v1 的 SKILL.md 与原始 fixture 完全一致
-        const contentRes = await api(`/api/v1/items/${skillSlug}/file-content?version=1&path=${encodeURIComponent("SKILL.md")}`);
+        const contentRes = await api(`/api/v1/items/${skillSlug}/file-content?version=1.0.0&path=${encodeURIComponent("SKILL.md")}`);
         expect(contentRes.status).toBe(200);
         const content = (await contentRes.json()) as PackageFileContentDto;
         expect(content.content).toBe(new TextDecoder().decode(skillEntries["SKILL.md"] ?? new Uint8Array()));
@@ -619,6 +628,42 @@ describe("API v1 主体流程", () => {
         expect((await api(`/api/v1/items/${profileSlug}/file-content?path=SKILL.md`)).status).toBe(404);
         // 收尾恢复
         await api(`/api/v1/items/${profileSlug}`, {method: "PATCH", jar: authorJar, json: {status: "published"}});
+    });
+
+    it("Workflow 使用统一包协议发布，且 import 与依赖均被拒绝", async () => {
+        const workflowSlug = "draft-book-workflow";
+        const created = await api("/api/v1/items", {
+            jar: authorJar,
+            json: {slug: workflowSlug, type: "workflow", title: "Draft Book Workflow"},
+        });
+        expect(created.status).toBe(200);
+
+        const packageJson = {
+            name: workflowSlug,
+            version: "1.0.0",
+            type: "module",
+            neurobook: {schemaVersion: 1, assetType: "workflow"},
+        };
+        const uploaded = await api(`/api/v1/items/${workflowSlug}/versions`, {
+            jar: authorJar,
+            form: uploadForm(buildPackageZip(packageJson, {"workflow.ts": strToU8("export default defineWorkflow({});")})),
+        });
+        expect(uploaded.status).toBe(200);
+        expect(((await uploaded.json()) as ItemVersionDto).version).toBe("1.0.0");
+
+        const imported = await api(`/api/v1/items/${workflowSlug}/versions`, {
+            jar: authorJar,
+            form: uploadForm(buildPackageZip({...packageJson, version: "1.1.0"}, {"workflow.ts": strToU8('import x from "x";')})),
+        });
+        expect(imported.status).toBe(400);
+        expect(((await imported.json()) as {message?: string}).message).toContain("不允许使用 import");
+
+        const dependencies = await api(`/api/v1/items/${workflowSlug}/versions`, {
+            jar: authorJar,
+            form: uploadForm(buildPackageZip({...packageJson, version: "1.1.0", dependencies: {x: "1.0.0"}}, {"workflow.ts": strToU8("export default {};")})),
+        });
+        expect(dependencies.status).toBe(400);
+        expect(((await dependencies.json()) as {message?: string}).message).toContain("不能声明运行时或开发依赖");
     });
 
     it("admin 精选：打标后 featured=1 过滤命中；非 admin 被拒", async () => {

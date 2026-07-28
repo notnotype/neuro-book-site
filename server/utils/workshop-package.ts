@@ -1,21 +1,24 @@
 import {createReadStream} from "node:fs";
 import {Unzip, UnzipInflate, unzipSync} from "fflate";
 import {createError} from "h3";
-import type {PackageManifest} from "./workshop-dto";
-import {PackageManifestSchema} from "./workshop-dto";
+import {gt} from "semver";
+import {assetEntryPath, hasRuntimeDependencies} from "../../shared/agent-asset-package";
+import type {AgentAssetPackage} from "./workshop-dto";
+import {AgentAssetPackageSchema} from "./workshop-dto";
 
-// 资产包（zip + nbook-package.json）解析与数据正确性校验。
-// 注意：第一版按设计完全信任用户，这里不做 zip bomb / zip slip / symlink 等安全防护，
-// 安全债清单见 neuro-book 仓 docs/tasks/88-workshop-platform/README.md。
+// Agent 资产包（zip + 根 package.json）解析与结构校验。站点从不执行包内代码。
 
 export type ParsedWorkshopPackage = {
-    manifest: PackageManifest;
+    packageJson: AgentAssetPackage;
     entryNames: string[]; // zip 内全部条目名（目录条目以 / 结尾）
 };
 
 const DEFAULT_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_ENTRIES = 500;
-const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_PACKAGE_JSON_BYTES = 64 * 1024;
+const MAX_WORKFLOW_BYTES = 1024 * 1024;
+const WINDOWS_RESERVED_NAMES = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const WORKFLOW_IMPORT_PATTERN = /(?:^|\n)\s*(?:import\s+|export\s+[^\n;]+\s+from\s+)|\b(?:import|require)\s*\(/m;
 
 /**
  * 服务端顺序验证 Workshop zip：不把压缩包或解压结果整体读入内存。
@@ -25,8 +28,10 @@ export async function parseWorkshopPackageFile(zipPath: string): Promise<ParsedW
     const maxEntries = positiveEnv("NB_WORKSHOP_MAX_ENTRIES", DEFAULT_MAX_ENTRIES);
     const entryNames: string[] = [];
     const seenPaths = new Set<string>();
-    const manifestChunks: Buffer[] = [];
-    let manifestBytes = 0;
+    const packageJsonChunks: Buffer[] = [];
+    const workflowChunks: Buffer[] = [];
+    let packageJsonBytes = 0;
+    let workflowBytes = 0;
     let uncompressedBytes = 0;
     let failure: Error | null = null;
 
@@ -37,12 +42,13 @@ export async function parseWorkshopPackageFile(zipPath: string): Promise<ParsedW
             file.terminate();
             return;
         }
-        if (seenPaths.has(safePath)) {
+        const foldedPath = safePath.toLowerCase();
+        if (seenPaths.has(foldedPath)) {
             failure = failure ?? createError({statusCode: 400, message: `zip 包含重复路径：${safePath}`});
             file.terminate();
             return;
         }
-        seenPaths.add(safePath);
+        seenPaths.add(foldedPath);
         entryNames.push(file.name.endsWith("/") ? `${safePath}/` : safePath);
         if (entryNames.length > maxEntries) {
             failure = failure ?? createError({statusCode: 400, message: `zip 条目数超过 ${maxEntries} 个上限`});
@@ -64,14 +70,23 @@ export async function parseWorkshopPackageFile(zipPath: string): Promise<ParsedW
                 file.terminate();
                 return;
             }
-            if (safePath === "nbook-package.json") {
-                manifestBytes += data.byteLength;
-                if (manifestBytes > MAX_MANIFEST_BYTES) {
-                    failure = createError({statusCode: 400, message: "nbook-package.json 体积异常"});
+            if (safePath === "package.json") {
+                packageJsonBytes += data.byteLength;
+                if (packageJsonBytes > MAX_PACKAGE_JSON_BYTES) {
+                    failure = createError({statusCode: 400, message: "package.json 体积异常"});
                     file.terminate();
                     return;
                 }
-                manifestChunks.push(Buffer.from(data));
+                packageJsonChunks.push(Buffer.from(data));
+            }
+            if (safePath === "workflow.ts") {
+                workflowBytes += data.byteLength;
+                if (workflowBytes > MAX_WORKFLOW_BYTES) {
+                    failure = createError({statusCode: 400, message: "workflow.ts 超过 1 MiB 上限"});
+                    file.terminate();
+                    return;
+                }
+                workflowChunks.push(Buffer.from(data));
             }
         };
         try {
@@ -103,43 +118,28 @@ export async function parseWorkshopPackageFile(zipPath: string): Promise<ParsedW
     if (failure) {
         throw failure;
     }
-    if (manifestChunks.length === 0) {
-        throw createError({statusCode: 400, message: "包根部缺少 nbook-package.json"});
+    if (packageJsonChunks.length === 0) {
+        throw createError({statusCode: 400, message: "包根部缺少 package.json"});
     }
-
-    let manifestRaw: unknown;
-    try {
-        manifestRaw = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(manifestChunks)));
-    } catch {
-        throw createError({statusCode: 400, message: "nbook-package.json 不是合法 JSON"});
-    }
-    const parsed = PackageManifestSchema.safeParse(manifestRaw);
-    if (!parsed.success) {
-        throw createError({
-            statusCode: 400,
-            message: `nbook-package.json 字段无效：${parsed.error.issues.map((issue) => issue.message).join("；")}`,
-        });
-    }
-    const manifest = parsed.data;
-    if (manifest.type === "skill" && !seenPaths.has("SKILL.md")) {
-        throw createError({statusCode: 400, message: "skill 包根部必须包含 SKILL.md"});
-    }
-    if (manifest.type === "profile" && !seenPaths.has(`${manifest.name}.profile.tsx`)) {
-        throw createError({statusCode: 400, message: `profile 包根部必须包含 ${manifest.name}.profile.tsx`});
-    }
-    return {manifest, entryNames};
+    const packageJson = parsePackageJsonBytes(Buffer.concat(packageJsonChunks));
+    assertPackageStructure(packageJson, seenPaths, Buffer.concat(workflowChunks));
+    return {packageJson, entryNames};
 }
 
 /**
- * 规范化并验证 zip 条目路径，拒绝绝对路径、盘符、NUL 与 `..` 逃逸。
+ * 验证 zip 条目路径，拒绝绝对路径、反斜杠、空段、点段、Windows 保留名及尾随空格/点。
  */
 export function sanitizeWorkshopEntryPath(entryName: string): string | null {
-    const normalized = entryName.replaceAll("\\", "/");
-    if (!normalized || normalized.includes("\0") || normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) {
+    if (!entryName || entryName.includes("\0") || entryName.includes("\\") || entryName.startsWith("/") || /^[A-Za-z]:/.test(entryName)) {
         return null;
     }
-    const parts = normalized.split("/").filter((part) => part.length > 0 && part !== ".");
-    if (parts.length === 0 || parts.some((part) => part === "..")) {
+    const withoutDirectoryMarker = entryName.endsWith("/") ? entryName.slice(0, -1) : entryName;
+    const parts = withoutDirectoryMarker.split("/");
+    if (parts.length === 0 || parts.some((part) => part.length === 0
+        || part === "."
+        || part === ".."
+        || /[ .]$/.test(part)
+        || WINDOWS_RESERVED_NAMES.test(part))) {
         return null;
     }
     return parts.join("/");
@@ -154,9 +154,7 @@ function positiveEnv(name: string, fallback: number): number {
 }
 
 /**
- * 解析上传的资产包 zip 并做数据正确性校验：
- * 1. zip 可解压且根部存在合法 nbook-package.json（字段由 zod 校验）；
- * 2. 按 type 校验入口存在：skill 根部必须有 SKILL.md，profile 根部必须有 <name>.profile.tsx。
+ * 解析内存中的资产包并执行与流式上传相同的结构校验。
  * 与条目的 type/name 一致性、version 递增需要数据库参与，在 API 层校验。
  */
 export function parseWorkshopPackage(zipBytes: Uint8Array): ParsedWorkshopPackage {
@@ -167,66 +165,98 @@ export function parseWorkshopPackage(zipBytes: Uint8Array): ParsedWorkshopPackag
         throw createError({statusCode: 400, message: "无法解析 zip 文件"});
     }
 
-    const manifestBytes = entries["nbook-package.json"];
-    if (!manifestBytes) {
-        throw createError({statusCode: 400, message: "包根部缺少 nbook-package.json"});
+    const normalizedEntries = new Map<string, {path: string; bytes: Uint8Array}>();
+    for (const [rawPath, bytes] of Object.entries(entries)) {
+        const safePath = sanitizeWorkshopEntryPath(rawPath);
+        if (!safePath) {
+            throw createError({statusCode: 400, message: `zip 包含非法路径：${rawPath}`});
+        }
+        const foldedPath = safePath.toLowerCase();
+        if (normalizedEntries.has(foldedPath)) {
+            throw createError({statusCode: 400, message: `zip 包含重复路径：${safePath}`});
+        }
+        normalizedEntries.set(foldedPath, {path: safePath, bytes});
     }
+    const packageEntry = normalizedEntries.get("package.json");
+    if (!packageEntry) {
+        throw createError({statusCode: 400, message: "包根部缺少 package.json"});
+    }
+    const packageJson = parsePackageJsonBytes(packageEntry.bytes);
+    const workflowBytes = normalizedEntries.get("workflow.ts")?.bytes ?? new Uint8Array();
+    assertPackageStructure(packageJson, new Set(normalizedEntries.keys()), workflowBytes);
+    return {packageJson, entryNames: [...normalizedEntries.values()].map((entry) => entry.path)};
+}
 
-    // JSON.parse 输出无静态类型，立即交给 zod 校验收窄，不在别处使用
-    let manifestRaw: unknown;
+/** 解析并校验根 package.json；外部 JSON 数据仅在此处以 unknown 进入 zod。 */
+function parsePackageJsonBytes(bytes: Uint8Array): AgentAssetPackage {
+    if (bytes.byteLength > MAX_PACKAGE_JSON_BYTES) {
+        throw createError({statusCode: 400, message: "package.json 体积异常"});
+    }
+    let raw: unknown;
     try {
-        manifestRaw = JSON.parse(new TextDecoder().decode(manifestBytes));
+        raw = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes));
     } catch {
-        throw createError({statusCode: 400, message: "nbook-package.json 不是合法 JSON"});
+        throw createError({statusCode: 400, message: "package.json 不是合法 JSON"});
     }
-
-    const parsed = PackageManifestSchema.safeParse(manifestRaw);
+    const parsed = AgentAssetPackageSchema.safeParse(raw);
     if (!parsed.success) {
         throw createError({
             statusCode: 400,
-            message: `nbook-package.json 字段无效：${parsed.error.issues.map((issue) => issue.message).join("；")}`,
+            message: `package.json 字段无效：${parsed.error.issues.map((issue) => issue.path.length > 0 ? `${issue.path.join(".")} ${issue.message}` : issue.message).join("；")}`,
         });
     }
-    const manifest = parsed.data;
+    return parsed.data;
+}
 
-    if (manifest.type === "skill" && !entries["SKILL.md"]) {
-        throw createError({statusCode: 400, message: "skill 包根部必须包含 SKILL.md"});
+/** 校验固定入口以及 Workflow 的无依赖、无 import 合同。 */
+function assertPackageStructure(packageJson: AgentAssetPackage, seenPaths: Set<string>, workflowBytes: Uint8Array): void {
+    const entryPath = assetEntryPath(packageJson.neurobook.assetType, packageJson.name);
+    if (!seenPaths.has(entryPath.toLowerCase())) {
+        throw createError({statusCode: 400, message: `${packageJson.neurobook.assetType} 包根部必须包含 ${entryPath}`});
     }
-    if (manifest.type === "profile" && !entries[`${manifest.name}.profile.tsx`]) {
-        throw createError({statusCode: 400, message: `profile 包根部必须包含 ${manifest.name}.profile.tsx`});
+    if (packageJson.neurobook.assetType !== "workflow") {
+        return;
     }
-
-    return {manifest, entryNames: Object.keys(entries)};
+    if (hasRuntimeDependencies(packageJson)) {
+        throw createError({statusCode: 400, message: "Workflow 包不能声明运行时或开发依赖"});
+    }
+    if (workflowBytes.byteLength > MAX_WORKFLOW_BYTES) {
+        throw createError({statusCode: 400, message: "workflow.ts 超过 1 MiB 上限"});
+    }
+    let source: string;
+    try {
+        source = new TextDecoder("utf-8", {fatal: true}).decode(workflowBytes);
+    } catch {
+        throw createError({statusCode: 400, message: "workflow.ts 不是合法 UTF-8 文本"});
+    }
+    if (WORKFLOW_IMPORT_PATTERN.test(source)) {
+        throw createError({statusCode: 400, message: "Workflow 不允许使用 import、export from 或 require"});
+    }
 }
 
 /**
  * 上传落库前的条目一致性校验（依赖条目现状，独立成纯函数便于单测）：
- * 1. manifest.type 必须与条目类型一致（首版与后续版本都校验）；
- * 2. 非首版（latestVersion 非 null）时 manifest.name 必须与条目安装名一致；
+ * 1. package.json assetType 必须与条目类型一致（首版与后续版本都校验）；
+ * 2. 非首版（latestVersion 非 null）时 package.json name 必须与条目安装名一致；
  * 3. version 必须大于当前最新版本，拒绝时直接提示应改为 N+1。
  * @param latestVersion 条目当前最新版本号；null 表示尚无任何版本（首版上传）
  */
-export function assertUploadAllowed(manifest: PackageManifest, item: {type: "skill" | "profile"; name: string}, latestVersion: number | null): void {
-    if (manifest.type !== item.type) {
-        throw createError({statusCode: 400, message: `包 type（${manifest.type}）与条目类型（${item.type}）不一致`});
+export function assertUploadAllowed(packageJson: AgentAssetPackage, item: {type: "skill" | "workflow" | "profile"; name: string}, latestVersion: string | null): void {
+    if (packageJson.neurobook.assetType !== item.type) {
+        throw createError({statusCode: 400, message: `包 assetType（${packageJson.neurobook.assetType}）与条目类型（${item.type}）不一致`});
     }
     if (latestVersion === null) {
         return;
     }
-    if (manifest.name !== item.name) {
-        throw createError({statusCode: 400, message: `包 name（${manifest.name}）与条目安装名（${item.name}）不一致`});
+    if (packageJson.name !== item.name) {
+        throw createError({statusCode: 400, message: `包 name（${packageJson.name}）与条目安装名（${item.name}）不一致`});
     }
-    if (manifest.version <= latestVersion) {
+    if (!gt(packageJson.version, latestVersion)) {
         throw createError({
             statusCode: 400,
-            message: `version（${manifest.version}）必须大于当前最新版本 ${latestVersion}，请把 manifest version 改为 ${latestVersion + 1}`,
+            message: `version（${packageJson.version}）必须按 SemVer precedence 严格大于当前最新版本 ${latestVersion}`,
         });
     }
-}
-
-/** zip 条目名分隔符归一：个别 Windows 归档器违规用反斜杠写条目名（完整包模式可能流入）。 */
-function normalizeZipPath(path: string): string {
-    return path.replaceAll("\\", "/");
 }
 
 /** 包内文件条目元信息；size 为 zip 中央目录头部声明的解压后大小。 */
@@ -242,8 +272,11 @@ export function listPackageEntries(zipBytes: Uint8Array): PackageEntryMeta[] {
     try {
         unzipSync(zipBytes, {
             filter: (file) => {
-                const path = normalizeZipPath(file.name);
-                if (!path.endsWith("/")) {
+                const path = sanitizeWorkshopEntryPath(file.name);
+                if (!path) {
+                    throw createError({statusCode: 500, message: "包文件含非法路径"});
+                }
+                if (!file.name.endsWith("/")) {
                     entries.push({path, size: file.originalSize});
                 }
                 return false; // 不解压任何条目，仅收集元信息
@@ -264,8 +297,8 @@ export function readPackageEntry(zipBytes: Uint8Array, path: string): Uint8Array
     try {
         unzipped = unzipSync(zipBytes, {
             filter: (file) => {
-                const name = normalizeZipPath(file.name);
-                return !name.endsWith("/") && name === path;
+                const name = sanitizeWorkshopEntryPath(file.name);
+                return name !== null && !file.name.endsWith("/") && name === path;
             },
         });
     } catch {

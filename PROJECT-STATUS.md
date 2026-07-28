@@ -2,7 +2,7 @@
 
 ## Summary
 
-NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 128 的代码生产化已完成：仓库硬切为 `neuro-book-site`，Workshop 有界流式上传、跨 Workshop/Backup 全站容量门禁、密文 `.nbbackup`、私有模式、live/ready、stdin 管理员创建/重置和非 root 只读容器合同均已落地。管理员注册码与用户邀请码已拆分，支持不限/限次、过期、停用和双参数注册链接；生产私有模式仍关闭注册。官方站已增加 Pino 结构化请求/异常日志、`X-Request-ID`、stdout + 专用持久日志卷和独立轮转合同。Windows typecheck/build 与 131 项全量测试通过，Actions `linux/amd64` 门禁通过。DMIT 已部署日志版本，完成双写、脱敏、容器重建持久性、强制轮转、压缩读取和 digest 回滚验收；本轮未调整 DNS、443、Nginx SNI 或 Xray。Public Invite Gate 不在本任务内。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 128 的生产基线仍在线运行；Task 01 已在 `dev` 完成 Skill / Workflow / Profile 统一 `package.json` 协议、SemVer、GitHub 式文件浏览和完整包发布工作台，但未合并 `master`、未迁移生产数据、未部署 DMIT。新版 `@notnotype/nb-ui` FileTree 已固定到公开 commit `291b2d6`。当前站点 typecheck、build 与 125 项全量测试通过，桌面/移动端浏览器验收通过；生产仍保持上一版日志与 Passport 部署状态。
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
@@ -19,11 +19,11 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 - `bun run deploy:dmit` 提供本地 push → Actions → GHCR digest → DMIT 升级编排：只接受干净 `master` 和正确 origin，不自动 commit/force push；远端串行执行镜像拉取、4 GiB 余量门禁、冷快照、原子 `.env` 切换、双 readiness 与失败整数据回滚，不接触 DNS/Nginx/443/Xray。
 - 首轮真实升级已由提交 `311bfd0`、Actions Run `30323712154` 和 digest `sha256:8261351c...` 证明，上一 digest 为 `sha256:6ec29b03...`，冷快照在 `ops/deployments/20260728T024146Z/`；同 digest 重跑幂等且没有第二份快照。线上当前 digest/commit/snapshot 以最新 root-only `deployment.txt` 为动态真相。
 - 条目状态 `published / unlisted / removed`；非 published 对公开面（列表/详情/版本/下载/评论）一律 404。
-- 包版本真相源是 zip 内 `nbook-package.json` 的 `version`，平台只校验严格递增；拒绝时直接提示应改为 N+1。
-- zip 原样落盘 `WORKSHOP_FILES_DIR`（默认 `./data/files`），布局 `<filesDir>/<itemId>/<version>.zip`；下载字节与上传一致（集成测试 sha256 对比证明）。
-- 发布 UX：canonical 包格式（zip + 根部 `nbook-package.json`）是唯一存储 / 下载 / 安装契约、后端不变；前端提供友好输入（profile 在线编辑 / 单文件，skill 在线编辑 / 目录 zip，另有「完整包」高级模式），**简单模式在浏览器就地生成 manifest 并自增 version** 后走同一 `createItem` + `uploadVersion` 端点。
+- Skill、Workflow、Profile 共享根 `package.json` 外壳；公开版本是 canonical SemVer，后续版本必须按 precedence 严格递增。固定入口分别为 `SKILL.md`、`workflow.ts`、`<name>.profile.tsx`；Workflow 不允许依赖或 import/require。
+- ZIP 仍原样落盘 `WORKSHOP_FILES_DIR`（默认 `./data/files`），但路径按不公开的发布序号寻址：`<filesDir>/<itemId>/<ordinal>.zip`。公开 API 只收发 SemVer；`packageSchemaVersion` 标记旧归档是否完成统一包迁移。
+- 发布 UX 已统一为 `/publish` 与 `/publish/:slug` 完整包工作台：浏览器内存草稿支持模板、CodeMirror、多文件/目录/ZIP 导入、树结构编辑、二进制保留、SemVer bump、完整包导出和最新版克隆；标题等元数据与包文件都受未保存离开确认保护。
 - UI 地基与模板对齐（2026-07-07）：根 `uno.config.ts`（presetWind3 + presetIcons + nb-ui 图标 safelist）+ `css: ["@unocss/reset/tailwind.css", "~/styles/global.css"]` 双 reset（修 body margin 白边）；5 主题系统（dark/light/catppuccin/dracula/tokyo-night，`app/theme/themes.ts` + `useTheme`，localStorage key `neuro-book-site-theme`）+ 顶栏调色板弹出 `ThemeSwitcher`。
-- 包内容在线预览（2026-07-08）：`GET /items/:slug/files`（文件清单 + previewable 判定）与 `GET /items/:slug/file-content?path=`（文本内容，扩展名白名单 + 200KB 上限），均走 published 可见性、不计下载数、每请求整读 zip 无缓存；解包收敛在 `workshop-package.ts` 的 `listPackageEntries`（fflate filter 零解压列清单）/ `readPackageEntry`（只解压目标条目），条目名反斜杠归一为 `/`；详情页「文件」Tab 消费（SKILL.md 渲染 markdown + frontmatter 折叠，代码走只读 CodeMirror）。
+- 包内容在线预览：`GET /items/:slug/files` 与 `file-content` 按 SemVer 查询、走 published 可见性且不计下载数；详情页使用 `nb-ui` FileTree + 内容区，版本、目录和文件路径保存在 `?tab=files&version=&path=`，桌面双栏、移动端折叠树、前进后退与刷新恢复均已实测。
 - 描述渲染已升级为 **sanitized markdown**（marked + DOMPurify，外链强制 `target=_blank rel=noopener`），门 A 安全债中的 markdown sanitize 项已消；评论仍是纯文本插值。
 - 条目精选：`WorkshopItem.featured`（admin 经 `PATCH /admin/items/:id/featured` 打标），公开列表支持 `featured=1` 过滤；首页默认态展示「编辑推荐 / 热门下载 / 最新发布」三分区，任一筛选生效即退回纯列表。
 - Windows 部署坑：Prisma 7 生成 client 顶层 `__dirname` polyfill 被 nitro bundle 后在 Windows 上启动即崩，`nuxt.config.ts` 里有 build-time rollup patch（`patch-prisma-generated-dirname`）兜底，Prisma 升级后若失效集成测试会在启动阶段暴露。
@@ -44,12 +44,15 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 | 账号第二轮：GitHub OAuth + Profile + Admin 后台（Task 119） | Done | ① GitHub OAuth（spec §5.2 落地）：`PassportIdentity` 表 + `passwordHash` 转可空（null=OAuth 免密账号）；`/auth/github` 单路由三分支（已绑定登录[封禁拦截]/已登录绑定[头像顺手带入]/未登录进补全注册），决策抽 `resolveGitHubSignIn` 纯函数单测；pending 身份走 sealed session cookie（`setAuthSession` 改 replace 语义顺带清残留）；补全注册 `GET/POST /api/auth/register/oauth`（邀请码闸门保留，免设密码）+ `/register/github` 补全页（register.vue 移入 register/index.vue 防嵌套路由空白）；身份管理 `GET/DELETE /api/v1/passport/identities`（无密码禁解绑防失联）。② Profile：User 加 avatarUrl/bio/websiteUrl，`GET/PATCH /api/v1/me/profile`（avatarUrl 限 http(s) 防 javascript: 注入，成功刷新会话）；ItemAuthorDto/PublicUserDto/AuthUserDto 透出 avatarUrl；新 `UserAvatar.vue`（img 失败回落首字母色块）吃遍顶栏/卡片/详情/评论/作者页；me.vue 第 5 tab「账号设置」=`AccountSettingsPanel.vue`（资料表单/GitHub 绑定区/密码区）。③ 修改密码 `POST /api/v1/me/password`：验旧密或免密补设；sessionVersion+1 踢其他设备后重写当前会话保活。④ 防爆破（门 A 债消）：login 10 次/5min/IP+用户名、register（含 oauth）5 次/时/IP、改密 5 次/时/用户，额度 env 可覆写（`NB_LOGIN/REGISTER/PASSWORD_RATE_LIMIT`）。⑤ Admin 后台六 tab（概览/邀请码/举报/条目/用户/备份，新面板抽 `app/components/admin/`）：用户管理（搜索分页/封禁=disabled+sessionVersion+1 即时踢线且 Bearer 面同步拒/角色变更同样踢线重登/self-guard 防锁死）、站点统计 `admin/stats`、备份用量 `admin/backup-usage`+行明细+admin 删除、邀请码 note 字段+全量列表过滤。测试 72→94（`github-oauth.test.ts` 纯函数 7 用例 + `account-admin.integration.test.ts` 15 用例；旧文件补 `NB_REGISTER_RATE_LIMIT` 环境防限流误伤）。真实 GitHub 回调需浏览器验收（env `NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET`，回调地址 `/auth/github`）。 |
 | 注册码与邀请码分离（Task 119 follow-up） | Done | 管理员注册码负责准入，用户邀请码只记录可选归属；两类码支持不限/限次、过期、备注与停用。密码/OAuth 注册共用事务内 CAS 消费；旧一次性邀请码迁为不限次数注册码。`/admin` 支持签发/设置/复制链接，`/me` 增“邀请好友”，`/register` 可预填双参数。typecheck、build 与 123 项全量测试通过；未做浏览器验证，生产注册仍关闭。 |
 | 官方站生产化与部署（Task 128） | In Progress | 代码、公开仓库/GHCR、`arch` 隔离容器验证、DMIT loopback、DNS/证书和 Nginx stream 443 均已完成；固定 digest、容器/主机重启、冷快照恢复和镜像回滚已演练。`deploy:dmit` 已通过真实 push、Actions、digest、冷快照升级和幂等重跑；首次 CLI 兼容失败在 DMIT 写入前停止并已修复。待既有 Xray 客户端确认、真实 NeuroBook 闭环和 canary 发布。 |
+| Agent 资产工作台（Task 01） | Done on `dev` | 三类统一包协议、SemVer/ordinal 数据模型、幂等旧包迁移器、作者源包接口、FileTree 详情浏览与完整包发布/更新工作台已完成。`nb-ui` 54 项测试 + typecheck/build、站点 125 项测试 + typecheck/build 与桌面/移动端 Playwright 均通过；尚未合并或部署。 |
 
 ## Known Follow-ups
 
 - **官方站点改造已实施（neuro-book Task 112 + Task 119）**：Passport、Backup、GitHub OAuth、Profile、管理员后台及注册码/邀请码分离均已落地，spec 真相源 `reference/passport/api-v1.md`。个人页六个分区（含“邀请好友”）；admin 六个分区（含“注册码”）。全量 123 项测试通过。待浏览器验收（GitHub OAuth 需配置真实 OAuth App）。
 - **Task 128 公网阶段待完成**：DNS、证书和 443 已接入，站点与 Xray 服务端探测通过；仍需用户确认全部既有 Xray 客户端，再启用 80 → HTTPS 跳转并进入真实 NeuroBook 闭环。HTTPS 稳定前不能把 NeuroBook 默认官方站地址改为 `https://nbook.notnotype.com`。DMIT 整盘损坏仍会同时丢失站点数据与同盘快照，这是 owner-only 私有内测明确接受的剩余风险。
+- **Task 01 生产迁移未授权**：旧整数版本与旧 ZIP 需要停站冷快照后执行数据库 migration 和 `migrate-agent-assets` dry-run/apply；当前自动 DMIT 升级流程不得用于这一不兼容迁移。
+- **NeuroBook 客户端能力仍待实现**：Workshop 安装、版本更新、冲突处理与回滚尚未接入统一包协议；站点完成不等于端到端资产更新可用。
 
 - Web 页面 UI 已建成（含后端补口 `GET /me/items`）。仍未定的语义问题：admin 恢复 removed 条目的目标状态（当前强制回 published，作者原 unlisted 意愿会丢失）、`GET /users/:username` 条目列表是否分页（前端当前直接铺）、`me/favorites` 是否以灰态展示已下架条目（当前直接过滤掉）。
 - 安全债清单（88 文档记录）：Workshop 公网上传的大小、解压总量、条目数、逃逸/重复路径、上传/评论限频已由 Task 128 收口。仍未实现下载/点赞计数去重等公开邀请 Gate 项；评论保持纯文本插值。
-- 真实 builtin profile key 带点（如 `leader.default`），与 manifest name 的 kebab-case 约束冲突，Web/客户端集成阶段需要定命名迁移策略。
+- 真实 builtin profile key 带点（如 `leader.default`），与 `package.json.name` 的 kebab-case 约束冲突，客户端集成阶段仍需确定安装名迁移策略。

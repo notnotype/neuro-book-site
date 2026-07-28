@@ -6,7 +6,12 @@ import {afterEach, describe, expect, it, vi} from "vitest";
 import {parseWorkshopPackageFile} from "./workshop-package";
 
 const cleanupRoots: string[] = [];
-const manifest = {manifestVersion: 1, type: "skill", name: "stream-skill", version: 1};
+const packageJson = {
+    name: "stream-skill",
+    version: "1.0.0",
+    type: "module",
+    neurobook: {schemaVersion: 1, assetType: "skill"},
+};
 
 afterEach(async () => {
     vi.unstubAllEnvs();
@@ -50,35 +55,35 @@ function duplicateZip(entries: Array<[string, Uint8Array]>): Uint8Array {
 describe("parseWorkshopPackageFile", () => {
     it("顺序解析合法包，不依赖整包解压", async () => {
         const path = await writeZip(zipSync({
-            "nbook-package.json": strToU8(JSON.stringify(manifest)),
+            "package.json": strToU8(JSON.stringify(packageJson)),
             "SKILL.md": strToU8("# skill"),
         }));
         const parsed = await parseWorkshopPackageFile(path);
-        expect(parsed.manifest).toEqual(manifest);
+        expect(parsed.packageJson).toEqual(packageJson);
         expect(parsed.entryNames).toContain("SKILL.md");
     });
 
     it("拒绝路径逃逸与归一化后的重复路径", async () => {
         const escaped = await writeZip(zipSync({
-            "nbook-package.json": strToU8(JSON.stringify(manifest)),
+            "package.json": strToU8(JSON.stringify(packageJson)),
             "SKILL.md": strToU8("# skill"),
             "../escape.txt": strToU8("bad"),
         }));
         await expect(parseWorkshopPackageFile(escaped)).rejects.toThrow(/非法路径/);
 
         const duplicate = await writeZip(duplicateZip([
-            ["nbook-package.json", strToU8(JSON.stringify(manifest))],
+            ["package.json", strToU8(JSON.stringify(packageJson))],
             ["SKILL.md", strToU8("# skill")],
-            ["docs//a.md", strToU8("one")],
-            ["docs/a.md", strToU8("two")],
+            ["docs/a.md", strToU8("one")],
+            ["DOCS/A.md", strToU8("two")],
         ]));
         await expect(parseWorkshopPackageFile(duplicate)).rejects.toThrow(/重复路径/);
     });
 
     it("按实际输出限制解压总量，中央目录伪造不能绕过", async () => {
-        vi.stubEnv("NB_WORKSHOP_MAX_UNCOMPRESSED_BYTES", "80");
+        vi.stubEnv("NB_WORKSHOP_MAX_UNCOMPRESSED_BYTES", "240");
         const zip = Buffer.from(zipSync({
-            "nbook-package.json": strToU8(JSON.stringify(manifest)),
+            "package.json": strToU8(JSON.stringify(packageJson)),
             "SKILL.md": strToU8("A".repeat(200)),
         }));
         const central = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
@@ -90,7 +95,7 @@ describe("parseWorkshopPackageFile", () => {
     it("限制最多条目数", async () => {
         vi.stubEnv("NB_WORKSHOP_MAX_ENTRIES", "2");
         const path = await writeZip(zipSync({
-            "nbook-package.json": strToU8(JSON.stringify(manifest)),
+            "package.json": strToU8(JSON.stringify(packageJson)),
             "SKILL.md": strToU8("# skill"),
             "README.md": strToU8("extra"),
         }));

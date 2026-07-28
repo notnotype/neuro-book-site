@@ -92,7 +92,7 @@ export function useWorkshopApi() {
         return await $fetch<WorkshopItemDto>(`/api/v1/items/${slug}`);
     }
 
-    /** 版本历史：按 version 倒序全量返回。 */
+    /** 版本历史：按内部发布序号倒序全量返回。 */
     async function getVersions(slug: string): Promise<ItemVersionDto[]> {
         return await $fetch<ItemVersionDto[]>(`/api/v1/items/${slug}/versions`);
     }
@@ -103,17 +103,17 @@ export function useWorkshopApi() {
     }
 
     /** 下载直链：version 缺省下载最新版。浏览器直接跳转此地址触发下载。 */
-    function downloadHref(slug: string, version?: number): string {
-        return `/api/v1/items/${slug}/download${version ? `?version=${version}` : ""}`;
+    function downloadHref(slug: string, version?: string): string {
+        return `/api/v1/items/${slug}/download${version ? `?version=${encodeURIComponent(version)}` : ""}`;
     }
 
     /** 包内文件列表（在线预览）：version 缺省取最新版；不计入下载数。 */
-    async function getPackageFiles(slug: string, version?: number): Promise<PackageFileListDto> {
+    async function getPackageFiles(slug: string, version?: string): Promise<PackageFileListDto> {
         return await $fetch<PackageFileListDto>(`/api/v1/items/${slug}/files`, {query: version ? {version} : {}});
     }
 
     /** 包内文本文件内容（在线预览）：二进制 / 超大文件后端拒绝（400）。 */
-    async function getPackageFileContent(slug: string, path: string, version?: number): Promise<PackageFileContentDto> {
+    async function getPackageFileContent(slug: string, path: string, version?: string): Promise<PackageFileContentDto> {
         return await $fetch<PackageFileContentDto>(`/api/v1/items/${slug}/file-content`, {query: {path, ...(version ? {version} : {})}});
     }
 
@@ -192,6 +192,20 @@ export function useWorkshopApi() {
     /** 我的发布：本人全部状态条目（含 unlisted）。后端 GET /me/items 于 Web 阶段补齐。 */
     async function myItems(page: PageParams = {}): Promise<PageDto<WorkshopItemDto>> {
         return await $fetch<PageDto<WorkshopItemDto>>("/api/v1/me/items", {query: page});
+    }
+
+    /** 作者读取自己任意状态条目的详情，用于 /publish/:slug。 */
+    async function getMyItem(slug: string): Promise<WorkshopItemDto> {
+        return await $fetch<WorkshopItemDto>(`/api/v1/me/items/${slug}`);
+    }
+
+    /** 作者读取自己的完整源包，不计公开下载数。 */
+    async function getMyPackage(slug: string, version?: string): Promise<Uint8Array> {
+        const bytes = await $fetch<ArrayBuffer>(`/api/v1/me/items/${slug}/package`, {
+            query: version ? {version} : {},
+            responseType: "arrayBuffer",
+        });
+        return new Uint8Array(bytes);
     }
 
     // ---- 账号自管理（cookie session 专属） ----
@@ -373,7 +387,7 @@ export function useWorkshopApi() {
         listItems, getItem, getVersions, getComments, downloadHref, getUser, getMeta,
         getPackageFiles, getPackageFileContent,
         createItem, uploadVersion, updateItem, like, unlike, favorite, unfavorite,
-        addComment, deleteComment, report, myFavorites, myItems,
+        addComment, deleteComment, report, myFavorites, myItems, getMyItem, getMyPackage,
         getMyProfile, updateMyProfile, changePassword, listIdentities, unlinkIdentity,
         getPendingOAuth, completeOAuthRegister,
         listMyInviteCodes, createMyInviteCode, updateMyInviteCode,

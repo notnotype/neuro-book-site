@@ -10,7 +10,7 @@ import {requireCurrentUser} from "./auth";
 /** 条目 DTO 所需的关联加载：作者、最新版本（取一条）、可见评论数 */
 export const itemDtoInclude = {
     author: true,
-    versions: {orderBy: {version: "desc" as const}, take: 1},
+    versions: {orderBy: {ordinal: "desc" as const}, take: 1},
     _count: {select: {comments: {where: {deletedAt: null}}}},
 } satisfies Prisma.WorkshopItemInclude;
 
@@ -186,10 +186,10 @@ export async function requireOwnedItem(event: H3Event, slug: string, user?: User
 }
 
 /**
- * 解析条目的目标版本：versionNumber 缺省取最新版；不存在时 404。
+ * 解析条目的目标 SemVer：version 缺省取最新版；不存在时 404。
  * 下载与包内容预览接口共用同一套版本解析语义。
  */
-export async function resolveItemVersion(item: ItemWithRefs, versionNumber?: number): Promise<ItemVersion> {
+export async function resolveItemVersion(item: ItemWithRefs, versionNumber?: string): Promise<ItemVersion> {
     const version = versionNumber
         ? await prisma.itemVersion.findUnique({where: {itemId_version: {itemId: item.id, version: versionNumber}}})
         : (item.versions[0] ?? null);
