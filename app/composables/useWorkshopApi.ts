@@ -134,14 +134,22 @@ export function useWorkshopApi() {
         return await $fetch<WorkshopItemDto>("/api/v1/items", {method: "POST", body});
     }
 
-    /** 上传新版本 zip（multipart：file 必带 filename，changelog 可选）。 */
-    async function uploadVersion(slug: string, input: {file: File; changelog?: string}): Promise<ItemVersionDto> {
+    /** 上传新版本，并把本次条目元数据放进同一个提交边界。 */
+    async function uploadVersion(slug: string, input: {file: File; changelog?: string; metadata?: UpdateItemInput}): Promise<ItemVersionDto> {
         const form = new FormData();
         form.append("file", input.file, input.file.name);
         if (input.changelog) {
             form.append("changelog", input.changelog);
         }
+        if (input.metadata) {
+            form.append("metadata", JSON.stringify(input.metadata));
+        }
         return await $fetch<ItemVersionDto>(`/api/v1/items/${slug}/versions`, {method: "POST", body: form});
+    }
+
+    /** 放弃无版本草稿并释放 slug。 */
+    async function discardItemDraft(slug: string): Promise<void> {
+        await $fetch(`/api/v1/me/items/${slug}/draft`, {method: "DELETE"});
     }
 
     /** 编辑条目元数据 / 上下架（published ↔ unlisted）。 */
@@ -386,7 +394,7 @@ export function useWorkshopApi() {
     return {
         listItems, getItem, getVersions, getComments, downloadHref, getUser, getMeta,
         getPackageFiles, getPackageFileContent,
-        createItem, uploadVersion, updateItem, like, unlike, favorite, unfavorite,
+        createItem, uploadVersion, discardItemDraft, updateItem, like, unlike, favorite, unfavorite,
         addComment, deleteComment, report, myFavorites, myItems, getMyItem, getMyPackage,
         getMyProfile, updateMyProfile, changePassword, listIdentities, unlinkIdentity,
         getPendingOAuth, completeOAuthRegister,

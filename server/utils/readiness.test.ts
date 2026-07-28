@@ -6,6 +6,7 @@ function readyDependencies(): ReadinessDependencies {
     return {
         database: vi.fn(async () => undefined),
         migrations: vi.fn(async () => undefined),
+        agentAssets: vi.fn(async () => undefined),
         databaseStorage: vi.fn(async () => undefined),
         workshopStorage: vi.fn(async () => undefined),
         backupStorage: vi.fn(async () => undefined),

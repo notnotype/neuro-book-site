@@ -6,6 +6,7 @@ import {backupDir} from "./backup-files";
 import {databaseFilePath} from "./sqlite-file";
 import {storageCapacityViolation, useStorageCapacityService} from "./storage-capacity";
 import {workshopFilesDir} from "./workshop-files";
+import {assertAgentAssetArchivesReady} from "./agent-asset-maintenance";
 
 export type ReadyCheckStatus = "ok" | "degraded" | "error";
 
@@ -18,6 +19,7 @@ export type ReadinessResult = {
     checks: {
         database: ReadyCheck;
         migrations: ReadyCheck;
+        agentAssets: ReadyCheck;
         databaseStorage: ReadyCheck;
         workshopStorage: ReadyCheck;
         backupStorage: ReadyCheck;
@@ -29,6 +31,7 @@ export type ReadinessResult = {
 export type ReadinessDependencies = {
     database: () => Promise<void>;
     migrations: () => Promise<void>;
+    agentAssets: () => Promise<void>;
     databaseStorage: () => Promise<void>;
     workshopStorage: () => Promise<void>;
     backupStorage: () => Promise<void>;
@@ -44,15 +47,16 @@ type MigrationRow = {
 
 /** 聚合所有 readiness 探针；容量耗尽降级但不阻断流量。 */
 export async function evaluateReadiness(dependencies: ReadinessDependencies): Promise<ReadinessResult> {
-    const [database, migrations, databaseStorage, workshopStorage, backupStorage, capacity] = await Promise.all([
+    const [database, migrations, agentAssets, databaseStorage, workshopStorage, backupStorage, capacity] = await Promise.all([
         criticalCheck(dependencies.database),
         criticalCheck(dependencies.migrations),
+        criticalCheck(dependencies.agentAssets),
         criticalCheck(dependencies.databaseStorage),
         criticalCheck(dependencies.workshopStorage),
         criticalCheck(dependencies.backupStorage),
         capacityCheck(dependencies.capacityExhausted),
     ]);
-    const checks = {database, migrations, databaseStorage, workshopStorage, backupStorage, capacity};
+    const checks = {database, migrations, agentAssets, databaseStorage, workshopStorage, backupStorage, capacity};
     const statuses = Object.values(checks).map((check) => check.status);
     return {
         status: statuses.includes("error") ? "not_ready" : statuses.includes("degraded") ? "degraded" : "ready",
@@ -68,6 +72,7 @@ export async function inspectReadiness(): Promise<ReadinessResult> {
             await prisma.$queryRaw`SELECT 1`;
         },
         migrations: assertMigrationsReady,
+        agentAssets: assertAgentAssetArchivesReady,
         databaseStorage: async () => await assertDirectoryWritable(dirname(databaseFilePath())),
         workshopStorage: async () => await assertDirectoryWritable(workshopFilesDir()),
         backupStorage: async () => await assertDirectoryWritable(backupDir()),

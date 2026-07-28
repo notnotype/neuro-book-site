@@ -2,12 +2,14 @@ import {execSync, spawn, type ChildProcess} from "node:child_process";
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs";
 import {join, resolve} from "node:path";
 import {createClient, type Client} from "@libsql/client";
+import {strToU8} from "fflate";
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
 import type {AdminBackupDto, AdminBackupUsageDto, AdminStatsDto, AdminUserDto} from "../shared/dto/admin.dto";
 import type {MeProfileDto} from "../shared/dto/auth.dto";
 import type {DeviceCodeDto, PassportIdentityDto, TokenGrantDto} from "../shared/dto/passport.dto";
 import type {PageDto, PublicUserDto, WorkshopItemDto} from "../shared/dto/workshop.dto";
 import type {InviteCodeDto, RegistrationCodeDto} from "../shared/dto/access-code.dto";
+import {agentPackage, buildPackageZip} from "./helpers/zip";
 
 // 账号第二轮 + admin 后台真实 HTTP 集成测试：build 产物起真实 server，覆盖
 // OAuth 补全注册守卫 / 身份绑定解绑（免密守卫）/ profile / 改密与踢线 / admin 用户管理与封禁 /
@@ -153,6 +155,8 @@ beforeAll(async () => {
         },
         stdio: "pipe",
     });
+    server.stdout?.resume();
+    server.stderr?.resume();
 
     const deadline = Date.now() + 30_000;
     while (true) {
@@ -366,6 +370,13 @@ describe("Profile 与展示位透出", () => {
         // 建一个条目验证 ItemAuthorDto.avatarUrl 全链透出
         const created = await api("/api/v1/items", {jar: u1Jar, json: {slug: "au1-demo-skill", type: "skill", title: "演示条目"}});
         expect(created.status).toBe(200);
+        const zip = buildPackageZip(agentPackage("skill", "au1-demo-skill", "1.0.0"), {
+            "SKILL.md": strToU8("---\nname: au1-demo-skill\ndescription: account integration fixture\n---\n\n# Demo\n"),
+        });
+        const form = new FormData();
+        form.append("file", new Blob([zip as BlobPart], {type: "application/zip"}), "package.zip");
+        const uploaded = await api("/api/v1/items/au1-demo-skill/versions", {jar: u1Jar, form});
+        expect(uploaded.status, await uploaded.clone().text()).toBe(200);
         const detail = (await (await api("/api/v1/items/au1-demo-skill")).json()) as WorkshopItemDto;
         expect(detail.author.avatarUrl).toBe("https://au1.example.com/avatar.png");
     });

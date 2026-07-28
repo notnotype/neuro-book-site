@@ -9,13 +9,13 @@ defineProps<{
 
 <template>
     <NuxtLink :to="`/items/${item.slug}`" class="group flex h-full flex-col gap-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-panel)] p-4 transition-colors hover:border-[var(--accent-main)]">
-        <!-- 头部：类型徽章 + 精选星标 + profile 可执行小标 -->
+        <!-- 头部：类型徽章 + 精选星标 + 代码审查提示 -->
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5">
                 <ItemTypeBadge :type="item.type" size="sm" />
                 <span v-if="item.featured" class="i-lucide-star h-3.5 w-3.5 text-[var(--accent-main)]" title="编辑推荐"></span>
             </div>
-            <span v-if="item.type === 'profile'" class="i-lucide-triangle-alert h-4 w-4 text-[var(--status-warning)]" title="含可执行代码"></span>
+            <span v-if="item.containsExecutableCode" class="i-lucide-triangle-alert h-4 w-4 text-[var(--status-warning)]" title="含可执行代码"></span>
         </div>
 
         <!-- 标题 + 摘要 -->

@@ -120,7 +120,7 @@ model WorkshopItem {
   description   String             @default("") // markdown 描述
   tagsJson      String             @default("[]") // JSON 字符串数组序列化的自由标签
   authorId      Int
-  status        WorkshopItemStatus @default(published)
+  status        WorkshopItemStatus @default(unlisted)
   featured      Boolean            @default(false) // admin 打标，首页「编辑推荐」分区
   downloadCount Int                @default(0)
   likeCount     Int                @default(0)
@@ -152,6 +152,7 @@ model ItemVersion {
   fileSize      Int // zip 字节数
   sha256        String // 服务端计算的 zip sha256（hex）
   minAppVersion String? // 为空表示作者未声明 NeuroBook 兼容下限
+  containsExecutableCode Boolean @default(true) // true 时下载运行前必须展示代码审查警告
   createdAt     DateTime @default(now())
 
   item WorkshopItem @relation(fields: [itemId], references: [id])

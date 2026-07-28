@@ -239,7 +239,7 @@ onMounted(load);
                     <span>发布于 {{ formatDate(item.createdAt) }}</span>
                 </div>
                 <TagChips :tags="item.tags" linkable />
-                <ExecutableWarning v-if="item.type === 'profile'" />
+                <ExecutableWarning v-if="item.containsExecutableCode" />
             </header>
 
             <!-- Tab 切换 -->
@@ -266,7 +266,7 @@ onMounted(load);
                     <ul v-else class="flex flex-col gap-3">
                         <li v-for="ver in versions" :key="ver.id" class="rounded-md border border-[var(--border-color)] bg-[var(--bg-panel)] p-3">
                             <div class="flex items-center justify-between gap-2">
-                                <span class="font-medium text-[var(--text-main)]">v{{ ver.version }}</span>
+                                <span class="flex items-center gap-1.5 font-medium text-[var(--text-main)]">v{{ ver.version }}<span v-if="ver.containsExecutableCode" class="i-lucide-triangle-alert h-3.5 w-3.5 text-[var(--status-warning)]" title="含可执行代码"></span></span>
                                 <span class="text-xs text-[var(--text-muted)]">{{ relativeTime(ver.createdAt) }}</span>
                             </div>
                             <p v-if="ver.changelog" class="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--text-secondary)]">{{ ver.changelog }}</p>

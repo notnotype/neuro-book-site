@@ -1,8 +1,11 @@
 import type {H3Event} from "h3";
 import {createError, getQuery} from "h3";
-import {valid} from "semver";
 import {z} from "zod";
-import {AGENT_ASSET_PACKAGE_SCHEMA_VERSION, AGENT_ASSET_TYPES} from "../../shared/agent-asset-package";
+import {
+    AGENT_ASSET_TYPES,
+    AgentAssetSemVerSchema,
+} from "../../shared/agent-asset-package";
+import type {AgentAssetPackageJson} from "../../shared/agent-asset-package";
 
 // Workshop 请求校验 schema。输出 DTO 纯类型见 shared/dto/workshop.dto.ts。
 
@@ -10,27 +13,9 @@ import {AGENT_ASSET_PACKAGE_SCHEMA_VERSION, AGENT_ASSET_TYPES} from "../../share
 export const kebabCasePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** 只接受 canonical SemVer，不接受 v1.2.3、=1.2.3 等宽松写法。 */
-export const SemVerStringSchema = z.string().trim().refine((value) => valid(value) === value, "必须是合法 SemVer");
+export const SemVerStringSchema = AgentAssetSemVerSchema;
 
-// 资产包根 package.json；passthrough 保留 Skill 的 scripts/bin 等标准 npm 字段。
-export const AgentAssetPackageSchema = z.object({
-    name: z.string().regex(kebabCasePattern, "name 必须是 kebab-case（小写字母/数字/连字符）"),
-    version: SemVerStringSchema,
-    type: z.literal("module", "type 必须是 module"),
-    neurobook: z.object({
-        schemaVersion: z.literal(AGENT_ASSET_PACKAGE_SCHEMA_VERSION, "neurobook.schemaVersion 必须为 1"),
-        assetType: z.enum(AGENT_ASSET_TYPES, "neurobook.assetType 必须是 skill、workflow 或 profile"),
-        minAppVersion: SemVerStringSchema.optional(),
-    }),
-    dependencies: z.record(z.string(), z.string()).optional(),
-    devDependencies: z.record(z.string(), z.string()).optional(),
-    peerDependencies: z.record(z.string(), z.string()).optional(),
-    optionalDependencies: z.record(z.string(), z.string()).optional(),
-    bin: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
-    scripts: z.record(z.string(), z.string()).optional(),
-}).passthrough();
-
-export type AgentAssetPackage = z.infer<typeof AgentAssetPackageSchema>;
+export type AgentAssetPackage = AgentAssetPackageJson;
 
 // 创建条目（元数据；安装名 name 在首版上传时从 manifest 落库）
 export const CreateItemRequestSchema = z.object({
@@ -116,6 +101,7 @@ export const AdminItemFeaturedRequestSchema = z.object({
 // 上传版本 multipart 的文本字段（文件字段单独处理）
 export const UploadVersionFieldsSchema = z.object({
     changelog: z.string().trim().max(10_000).default(""),
+    metadata: z.string().max(60_000).optional(),
 });
 
 /**

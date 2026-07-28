@@ -80,6 +80,7 @@ async function toggleStatus(): Promise<void> {
     <Panel padding="sm" class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center gap-2">
             <ItemTypeBadge :type="item.type" size="sm" />
+            <span v-if="item.containsExecutableCode" class="i-lucide-triangle-alert h-4 w-4 text-[var(--status-warning)]" title="含可执行代码"></span>
             <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium" :class="statusBadge.cls">{{ statusBadge.label }}</span>
             <span class="ml-auto text-xs text-[var(--text-muted)]">{{ item.latestVersion ? `v${item.latestVersion}` : "未发布版本" }}</span>
         </div>
@@ -88,7 +89,7 @@ async function toggleStatus(): Promise<void> {
             <Button v-if="isPublished" variant="secondary" size="sm" @click="navigateTo(`/items/${item.slug}`)"><span class="i-lucide-external-link h-4 w-4"></span>查看</Button>
             <Button variant="secondary" size="sm" :disabled="isRemoved" @click="openEdit"><span class="i-lucide-pencil h-4 w-4"></span>编辑信息</Button>
             <Button variant="secondary" size="sm" @click="navigateTo(`/publish/${item.slug}`)"><span class="i-lucide-package-open h-4 w-4"></span>{{ item.latestVersion ? "更新资产" : "完成首版" }}</Button>
-            <Button variant="subtle" size="sm" :disabled="isRemoved" :loading="toggling" @click="toggleStatus"><span :class="isPublished ? 'i-lucide-eye-off' : 'i-lucide-eye'" class="h-4 w-4"></span>{{ isPublished ? "下架" : "上架" }}</Button>
+            <Button v-if="item.latestVersion" variant="subtle" size="sm" :disabled="isRemoved" :loading="toggling" @click="toggleStatus"><span :class="isPublished ? 'i-lucide-eye-off' : 'i-lucide-eye'" class="h-4 w-4"></span>{{ isPublished ? "下架" : "上架" }}</Button>
         </div>
 
         <Dialog v-model="showEdit" title="编辑条目信息" size="md" show-cancel confirm-label="保存" :busy="editBusy" @confirm="saveEdit">

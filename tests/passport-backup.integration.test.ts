@@ -9,7 +9,7 @@ import type {AuthorizationDto, DeviceCodeDto, PendingDeviceDto, TokenGrantDto} f
 import type {BackupDto, BackupListDto} from "../shared/dto/backup.dto";
 import type {ItemVersionDto, PageDto, WorkshopItemDto} from "../shared/dto/workshop.dto";
 import type {RegistrationCodeDto} from "../shared/dto/access-code.dto";
-import {buildPackageZip} from "./helpers/zip";
+import {agentPackage, buildPackageZip} from "./helpers/zip";
 
 // Passport + Backup 真实 HTTP 集成测试：build 产物起真实 server，覆盖
 // 设备码全状态机 / refresh 轮换与重放撤链 / Bearer scope 面 / 备份往返与配额 rotate。
@@ -200,6 +200,8 @@ beforeAll(async () => {
         },
         stdio: "pipe",
     });
+    server.stdout?.resume();
+    server.stderr?.resume();
 
     const deadline = Date.now() + 30_000;
     while (true) {
@@ -319,8 +321,8 @@ describe("Passport 设备授权流", () => {
         const item = (await created.json()) as WorkshopItemDto;
 
         const zip = buildPackageZip(
-            {manifestVersion: 1, type: "skill", name: "passport-e2e-skill", version: 1},
-            {"SKILL.md": strToU8("# passport e2e\n")},
+            agentPackage("skill", "passport-e2e-skill", "1.0.0"),
+            {"SKILL.md": strToU8("---\nname: passport-e2e-skill\ndescription: passport e2e\n---\n\n# passport e2e\n")},
         );
         const form = new FormData();
         form.append("file", new Blob([zip as BlobPart], {type: "application/zip"}), "pkg.zip");

@@ -1,12 +1,12 @@
 import {rm} from "node:fs/promises";
 import type {ItemVersionDto} from "../../../../../shared/dto/workshop.dto";
-import type {ItemVersion} from "../../../../database/prisma";
-import {Prisma, prisma} from "../../../../database/prisma";
+import {prisma} from "../../../../database/prisma";
 import {requireAccess} from "../../../../utils/passport-guard";
 import {requireOwnedItem, requireSlugParam, toVersionDto} from "../../../../utils/workshop";
 import {parseWorkshopPackageFile, assertUploadAllowed} from "../../../../utils/workshop-package";
-import {commitVersionZip, workshopFilesDir} from "../../../../utils/workshop-files";
+import {workshopFilesDir} from "../../../../utils/workshop-files";
 import {parseWorkshopUpload} from "../../../../utils/workshop-upload";
+import {publishWorkshopVersion} from "../../../../utils/workshop-version-publisher";
 import {consumeRateLimit, envRateLimit} from "../../../../utils/rate-limit";
 import {useStorageCapacityService} from "../../../../utils/storage-capacity";
 
@@ -53,39 +53,18 @@ export default defineEventHandler(async (event): Promise<ItemVersionDto> => {
                 temporaryAlreadyAllocated: true,
             });
 
-            // 先写库再落盘：并发上传同版本时只有一个能通过唯一约束。
-            let version: ItemVersion;
-            try {
-                [version] = await prisma.$transaction([
-                    prisma.itemVersion.create({
-                        data: {
-                            itemId: item.id,
-                            ordinal,
-                            version: packageJson.version,
-                            packageSchemaVersion: 1,
-                            changelog: upload.changelog,
-                            fileName: upload.fileName || `${item.slug}-v${packageJson.version}.zip`,
-                            fileSize: upload.fileSize,
-                            sha256: upload.sha256,
-                            minAppVersion: packageJson.neurobook.minAppVersion ?? null,
-                        },
-                    }),
-                    // 首版落库安装名；空 data 时也会刷新 updatedAt，让"最新"排序反映版本活跃
-                    prisma.workshopItem.update({where: {id: item.id}, data: latest ? {} : {name: packageJson.name}}),
-                ]);
-            } catch (error) {
-                if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-                    throw createError({statusCode: 409, message: `version ${packageJson.version} 或发布序号已存在（可能有并发上传），请确认最新版本后重试`});
-                }
-                throw error;
-            }
-
-            try {
-                await commitVersionZip(upload.tmpPath, item.id, ordinal);
-            } catch (error) {
-                await prisma.itemVersion.delete({where: {id: version.id}}).catch(() => undefined);
-                throw error;
-            }
+            const version = await publishWorkshopVersion({
+                item,
+                ordinal,
+                latestVersion: latest?.version ?? null,
+                packageJson,
+                tmpPath: upload.tmpPath,
+                fileName: upload.fileName,
+                fileSize: upload.fileSize,
+                sha256: upload.sha256,
+                changelog: upload.changelog,
+                ...(upload.metadata ? {metadata: upload.metadata} : {}),
+            });
             return toVersionDto(version);
         } catch (error) {
             await rm(upload.tmpPath, {force: true}).catch(() => undefined);

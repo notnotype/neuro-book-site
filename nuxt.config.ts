@@ -26,6 +26,9 @@ export default defineNuxtConfig({
     },
     nitro: {
         rollupConfig: {
+            // 服务端 AST 校验从生产 node_modules 加载 TypeScript。不要把约 9 MiB
+            // 编译器内联进 Nitro 单文件，否则 Rollup 会占用数 GiB 内存。
+            external: ["typescript"],
             plugins: [
                 {
                     // Prisma 生成 client 顶层的 __dirname polyfill 在 bundle 后拿到的是

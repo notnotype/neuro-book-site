@@ -12,7 +12,7 @@ const route = useRoute();
 const api = useWorkshopApi();
 const notification = useNotification();
 const editingSlug = computed(() => typeof route.params.slug === "string" ? route.params.slug : "");
-const editing = computed(() => editingSlug.value.length > 0);
+const editing = computed(() => editingSlug.value.length > 0 || item.value !== null);
 
 const loading = ref(false);
 const loadError = ref("");
@@ -26,6 +26,7 @@ const workbench = ref<PackageWorkbenchState>({
     draft: createPackageDraft("skill"),
     packageJson: null,
     error: "正在初始化包草稿",
+    validating: true,
     dirty: false,
 });
 
@@ -35,6 +36,8 @@ const description = ref("");
 const tagsInput = ref("");
 const changelog = ref("");
 const metadataBaseline = ref("");
+const slugInput = ref("");
+const slugTouched = ref(false);
 
 const tags = computed(() => tagsInput.value.split(",").map((tag) => tag.trim()).filter(Boolean));
 const metadataSnapshot = computed(() => JSON.stringify({
@@ -45,11 +48,12 @@ const metadataSnapshot = computed(() => JSON.stringify({
     changelog: changelog.value,
 }));
 const hasUnsavedDraft = computed(() => workbench.value.dirty || metadataSnapshot.value !== metadataBaseline.value);
-const slugCandidate = computed(() => editingSlug.value || workbench.value.packageJson?.name || "");
+const slugCandidate = computed(() => editingSlug.value || item.value?.slug || slugInput.value.trim());
 const slugValid = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slugCandidate.value) && slugCandidate.value.length >= 3);
 const draftSlug = computed(() => slugCandidate.value);
 const canPublish = computed(() => Boolean(workbench.value.packageJson)
     && !workbench.value.error
+    && !workbench.value.validating
     && title.value.trim().length > 0
     && slugValid.value
     && item.value?.status !== "removed");
@@ -64,6 +68,7 @@ async function load(): Promise<void> {
         if (editing.value) {
             const current = await api.getMyItem(editingSlug.value);
             item.value = current;
+            slugInput.value = current.slug;
             title.value = current.title;
             summary.value = current.summary;
             description.value = current.description;
@@ -83,14 +88,33 @@ async function load(): Promise<void> {
 /** 接收工作台草稿、协议校验与未保存状态。 */
 function updateWorkbench(next: PackageWorkbenchState): void {
     workbench.value = next;
+    if (!item.value && !slugTouched.value && next.packageJson) {
+        slugInput.value = suggestedSlug(next.packageJson.name);
+    }
 }
 
-/** 创建或更新条目元数据，然后上传同一份受检 ZIP。 */
+/** URL slug 与安装身份分离；点分 Profile key 默认转成可编辑的 kebab-case 建议。 */
+function suggestedSlug(name: string): string {
+    return name.replaceAll(".", "-");
+}
+
+/** 用户一旦手动修改 slug，后续安装名编辑不再覆盖其选择。 */
+function setSlug(value: string): void {
+    slugTouched.value = true;
+    slugInput.value = value;
+}
+
+/** 创建草稿条目或复用既有条目，再原子提交版本与元数据。 */
 async function publish(): Promise<void> {
     if (!canPublish.value || !workbench.value.packageJson) {
         return;
     }
-    const built = buildDraftZip(workbench.value.draft, draftSlug.value);
+    const built = await buildDraftZip(workbench.value.draft, draftSlug.value, item.value
+        ? {
+              type: item.value.type,
+              ...(item.value.latestVersion ? {name: item.value.name, latestVersion: item.value.latestVersion} : {}),
+          }
+        : undefined);
     if (!built.ok) {
         publishError.value = built.error;
         return;
@@ -99,14 +123,8 @@ async function publish(): Promise<void> {
     publishError.value = "";
     try {
         let target = item.value;
-        if (target) {
-            target = await api.updateItem(target.slug, {
-                title: title.value.trim(),
-                summary: summary.value.trim(),
-                description: description.value,
-                tags: tags.value,
-            });
-        } else {
+        const updatingVersion = Boolean(target?.latestVersion);
+        if (!target) {
             target = await api.createItem({
                 slug: draftSlug.value,
                 type: built.packageJson.neurobook.assetType,
@@ -116,16 +134,43 @@ async function publish(): Promise<void> {
                 tags: tags.value,
             });
             item.value = target;
+            slugInput.value = target.slug;
+            window.history.replaceState(window.history.state, "", `/publish/${encodeURIComponent(target.slug)}`);
         }
-        await api.uploadVersion(target.slug, {file: built.file, changelog: changelog.value.trim()});
-        notification.success(editing.value ? "新版本已发布" : "资产已发布");
-        workbench.value = {...workbench.value, dirty: false};
+        await api.uploadVersion(target.slug, {
+            file: built.file,
+            changelog: changelog.value.trim(),
+            metadata: {
+                title: title.value.trim(),
+                summary: summary.value.trim(),
+                description: description.value,
+                tags: tags.value,
+            },
+        });
+        notification.success(updatingVersion ? "新版本已发布" : "资产已发布");
+        workbench.value = {...workbench.value, dirty: false, validating: false};
         metadataBaseline.value = metadataSnapshot.value;
         await navigateTo(`/items/${target.slug}`);
     } catch (error) {
         publishError.value = resolveApiErrorMessage(error, "发布失败");
     } finally {
         publishing.value = false;
+    }
+}
+
+/** 放弃尚未上传首版的服务端草稿。 */
+async function discardDraft(): Promise<void> {
+    if (!item.value || item.value.latestVersion || !window.confirm("确认放弃这个未发布草稿并释放 slug？此操作不能撤销。")) {
+        return;
+    }
+    try {
+        await api.discardItemDraft(item.value.slug);
+        workbench.value = {...workbench.value, dirty: false};
+        metadataBaseline.value = metadataSnapshot.value;
+        notification.success("草稿已删除");
+        await navigateTo("/me?tab=published");
+    } catch (error) {
+        publishError.value = resolveApiErrorMessage(error, "删除草稿失败");
     }
 }
 
@@ -163,8 +208,8 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
 
             <!-- 条目元数据 -->
             <Panel class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField v-if="!editing" label="发布 slug" description="由安装名生成，发布后不可修改。" required>
-                    <FormInput :model-value="workbench.packageJson?.name ?? ''" placeholder="my-awesome-skill" disabled />
+                <FormField v-if="!editing" label="发布 slug" description="网页地址标识；默认根据安装名生成，创建后不可修改。" required>
+                    <FormInput :model-value="slugInput" placeholder="my-awesome-skill" @update:model-value="setSlug" />
                 </FormField>
                 <FormField label="标题" required><FormInput v-model="title" /></FormField>
                 <FormField label="摘要"><FormInput v-model="summary" /></FormField>
@@ -179,6 +224,8 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
                 :initial-type="item?.type ?? 'skill'"
                 :initial-name="item?.name || editingSlug || 'new-asset'"
                 :locked-type="editing"
+                :locked-identity="Boolean(item?.latestVersion)"
+                :latest-version="item?.latestVersion ?? undefined"
                 @change="updateWorkbench"
             />
 
@@ -188,7 +235,10 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
                 <p v-if="publishError" class="text-sm text-[var(--status-danger)]">{{ publishError }}</p>
                 <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-color)] pt-3">
                     <p class="text-xs text-[var(--text-muted)]">{{ workbench.packageJson ? `${workbench.packageJson.neurobook.assetType} · ${workbench.packageJson.name} · v${workbench.packageJson.version}` : "请先修复 package.json" }}</p>
-                    <Button :disabled="!canPublish" :loading="publishing" @click="publish"><span class="i-lucide-upload h-4 w-4"></span>{{ editing ? "发布新版本" : "发布资产" }}</Button>
+                    <div class="flex items-center gap-2">
+                        <Button v-if="item && !item.latestVersion" variant="danger" :disabled="publishing" @click="discardDraft"><span class="i-lucide-trash-2 h-4 w-4"></span>放弃草稿</Button>
+                        <Button :disabled="!canPublish" :loading="publishing" @click="publish"><span class="i-lucide-upload h-4 w-4"></span>{{ item?.latestVersion ? "发布新版本" : "发布资产" }}</Button>
+                    </div>
                 </div>
             </Panel>
         </template>

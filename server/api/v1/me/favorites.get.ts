@@ -11,7 +11,7 @@ export default defineEventHandler(async (event): Promise<PageDto<WorkshopItemDto
     const user = await requireCurrentUser(event);
     const query = validateQuery(event, PageQuerySchema);
 
-    const where = {userId: user.id, item: {status: "published" as const}};
+    const where = {userId: user.id, item: {status: "published" as const, versions: {some: {}}}};
     const [total, favorites] = await Promise.all([
         prisma.favorite.count({where}),
         prisma.favorite.findMany({

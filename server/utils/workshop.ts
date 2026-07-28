@@ -54,6 +54,7 @@ export function toItemDto(item: ItemWithRefs, viewer?: ItemViewerStateDto): Work
         likeCount: item.likeCount,
         commentCount: item._count.comments,
         latestVersion: item.versions[0]?.version ?? null,
+        containsExecutableCode: item.versions[0]?.containsExecutableCode ?? false,
         author: toItemAuthorDto(item.author),
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
@@ -73,6 +74,7 @@ export function toVersionDto(version: ItemVersion): ItemVersionDto {
         fileSize: version.fileSize,
         sha256: version.sha256,
         minAppVersion: version.minAppVersion,
+        containsExecutableCode: version.containsExecutableCode,
         createdAt: version.createdAt.toISOString(),
     };
 }
@@ -151,7 +153,7 @@ export function requireIdParam(event: H3Event): number {
  */
 export async function requirePublishedItem(slug: string): Promise<ItemWithRefs> {
     const item = await prisma.workshopItem.findUnique({where: {slug}, include: itemDtoInclude});
-    if (!item || item.status !== "published") {
+    if (!item || item.status !== "published" || item.versions.length === 0) {
         throw createError({statusCode: 404, message: "条目不存在"});
     }
     return item;

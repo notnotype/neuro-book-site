@@ -30,6 +30,7 @@ export default defineEventHandler(async (event): Promise<WorkshopItemDto> => {
                 description: body.description,
                 tagsJson: JSON.stringify(body.tags),
                 authorId: user.id,
+                status: "unlisted",
             },
             include: itemDtoInclude,
         });

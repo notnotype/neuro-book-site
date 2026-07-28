@@ -6,7 +6,7 @@ import {strToU8, unzipSync} from "fflate";
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
 import type {CommentDto, FavoriteStateDto, ItemVersionDto, LikeStateDto, PackageFileContentDto, PackageFileListDto, PageDto, PublicUserDto, ReportDto, WorkshopItemDto, WorkshopMetaDto} from "../shared/dto/workshop.dto";
 import type {RegistrationCodeDto} from "../shared/dto/access-code.dto";
-import {buildPackageZip, readDirAsZipEntries} from "./helpers/zip";
+import {agentPackage, buildPackageZip, readDirAsZipEntries} from "./helpers/zip";
 
 // API v1 真实 HTTP 集成测试：build 产物起真实 server，走完整主体流程——
 // admin 签发注册码 → 注册 → 登录 → 创建条目 → 上传 skill/profile zip 版本 →
@@ -82,11 +82,14 @@ async function api(path: string, options: ApiOptions = {}): Promise<Response> {
 }
 
 /** 构造 multipart 上传表单 */
-function uploadForm(zipBytes: Uint8Array, changelog?: string): FormData {
+function uploadForm(zipBytes: Uint8Array, changelog?: string, metadata?: object): FormData {
     const form = new FormData();
     form.append("file", new Blob([zipBytes as BlobPart], {type: "application/zip"}), "package.zip");
     if (changelog !== undefined) {
         form.append("changelog", changelog);
+    }
+    if (metadata !== undefined) {
+        form.append("metadata", JSON.stringify(metadata));
     }
     return form;
 }
@@ -146,6 +149,8 @@ beforeAll(async () => {
         },
         stdio: "pipe",
     });
+    server.stdout?.resume();
+    server.stderr?.resume();
 
     const deadline = Date.now() + 30_000;
     while (true) {
@@ -239,25 +244,60 @@ describe("API v1 主体流程", () => {
         expect(item.slug).toBe(skillSlug);
         expect(item.name).toBe(""); // 首版上传前安装名为空
         expect(item.latestVersion).toBeNull();
+        expect(item.status).toBe("unlisted");
         skillItemId = item.id;
+
+        expect((await api(`/api/v1/items/${skillSlug}`)).status).toBe(404);
+        const emptyPublicList = (await (await api("/api/v1/items")).json()) as PageDto<WorkshopItemDto>;
+        expect(emptyPublicList.items.some((entry) => entry.slug === skillSlug)).toBe(false);
+        expect((await api(`/api/v1/items/${skillSlug}`, {method: "PATCH", jar: authorJar, json: {status: "published"}})).status).toBe(409);
+        expect((await api(`/api/v1/admin/items/${item.id}/status`, {method: "PATCH", jar: adminJar, json: {status: "published"}})).status).toBe(409);
 
         const duplicated = await api("/api/v1/items", {jar: authorJar, json: itemBody});
         expect(duplicated.status).toBe(409);
+
+        const disposableBody = {slug: "disposable-draft", type: "skill", title: "Disposable"};
+        expect((await api("/api/v1/items", {jar: authorJar, json: disposableBody})).status).toBe(200);
+        expect((await api("/api/v1/me/items/disposable-draft/draft", {method: "DELETE", jar: readerJar})).status).toBe(403);
+        expect((await api("/api/v1/me/items/disposable-draft/draft", {method: "DELETE", jar: authorJar})).status).toBe(204);
+        expect((await api("/api/v1/items", {jar: authorJar, json: disposableBody})).status).toBe(200);
+        expect((await api("/api/v1/me/items/disposable-draft/draft", {method: "DELETE", jar: authorJar})).status).toBe(204);
     });
 
     it("上传 skill 首版：sha256 落库、安装名从 package.json 落库", async () => {
-        skillZipV1 = buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 1}, skillEntries);
-        const uploaded = await api(`/api/v1/items/${skillSlug}/versions`, {jar: authorJar, form: uploadForm(skillZipV1, "首个版本")});
-        expect(uploaded.status).toBe(200);
+        skillZipV1 = buildPackageZip(agentPackage("skill", "stop-slop", "1.0.0"), skillEntries);
+        const invalidSource = buildPackageZip(
+            agentPackage("skill", "stop-slop", "1.0.0"),
+            {...skillEntries, "SKILL.md": strToU8("# missing frontmatter")},
+        );
+        const failed = await api(`/api/v1/items/${skillSlug}/versions`, {
+            jar: authorJar,
+            form: uploadForm(invalidSource, "失败版本", {title: "不应提前提交"}),
+        });
+        expect(failed.status).toBe(400);
+        const draftAfterFailure = (await (await api(`/api/v1/me/items/${skillSlug}`, {jar: authorJar})).json()) as WorkshopItemDto;
+        expect(draftAfterFailure.title).toBe("Stop Slop（fork）");
+        expect(draftAfterFailure.latestVersion).toBeNull();
+        expect((await api(`/api/v1/items/${skillSlug}`)).status).toBe(404);
+
+        const uploaded = await api(`/api/v1/items/${skillSlug}/versions`, {
+            jar: authorJar,
+            form: uploadForm(skillZipV1, "首个版本", {title: "Stop Slop 已发布"}),
+        });
+        expect(uploaded.status, await uploaded.clone().text()).toBe(200);
         const version = (await uploaded.json()) as ItemVersionDto;
         expect(version.version).toBe("1.0.0");
         expect(version.sha256).toBe(sha256Hex(skillZipV1));
         expect(version.fileSize).toBe(skillZipV1.byteLength);
+        expect(version.containsExecutableCode).toBe(false);
 
         const detail = await api(`/api/v1/items/${skillSlug}`);
         const item = (await detail.json()) as WorkshopItemDto;
         expect(item.name).toBe("stop-slop");
         expect(item.latestVersion).toBe("1.0.0");
+        expect(item.title).toBe("Stop Slop 已发布");
+        expect(item.containsExecutableCode).toBe(false);
+        expect((await api(`/api/v1/me/items/${skillSlug}/draft`, {method: "DELETE", jar: authorJar})).status).toBe(409);
     });
 
     it("上传拒绝用例：缺 package.json / version 不递增 / name 变更 / type 不一致 / 非作者", async () => {
@@ -267,34 +307,37 @@ describe("API v1 主体流程", () => {
 
         const sameVersion = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
-            form: uploadForm(buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 1}, skillEntries)),
+            form: uploadForm(buildPackageZip(agentPackage("skill", "stop-slop", "1.0.0"), skillEntries)),
         });
         expect(sameVersion.status).toBe(400);
         expect(((await sameVersion.json()) as {message?: string}).message).toContain("严格大于当前最新版本 1.0.0");
 
         const renamed = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
-            form: uploadForm(buildPackageZip({manifestVersion: 1, type: "skill", name: "renamed-slop", version: 2}, skillEntries)),
+            form: uploadForm(buildPackageZip(agentPackage("skill", "renamed-slop", "2.0.0"), {
+                ...skillEntries,
+                "SKILL.md": strToU8("---\nname: renamed-slop\ndescription: renamed package\n---\n\n# renamed\n"),
+            })),
         });
         expect(renamed.status).toBe(400);
-        expect(((await renamed.json()) as {message?: string}).message).toContain("与条目安装名（stop-slop）不一致");
+        expect(((await renamed.json()) as {message?: string}).message).toContain("安装名必须保持为 stop-slop");
 
         const wrongType = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
-            form: uploadForm(buildPackageZip({manifestVersion: 1, type: "profile", name: "stop-slop", version: 2}, {"stop-slop.profile.tsx": skillEntries["SKILL.md"] ?? new Uint8Array()})),
+            form: uploadForm(buildPackageZip(agentPackage("profile", "stop-slop", "2.0.0"), {"stop-slop.profile.tsx": strToU8("export default {};")})),
         });
         expect(wrongType.status).toBe(400);
-        expect(((await wrongType.json()) as {message?: string}).message).toContain("assetType（profile）与条目类型（skill）不一致");
+        expect(((await wrongType.json()) as {message?: string}).message).toContain("包类型必须保持为 skill");
 
         const notOwner = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: readerJar,
-            form: uploadForm(buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 2}, skillEntries)),
+            form: uploadForm(buildPackageZip(agentPackage("skill", "stop-slop", "2.0.0"), skillEntries)),
         });
         expect(notOwner.status).toBe(403);
     });
 
     it("上传 skill v2 与 profile 条目全流程；profile 缺入口被拒", async () => {
-        skillZipV2 = buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 2}, skillEntries);
+        skillZipV2 = buildPackageZip(agentPackage("skill", "stop-slop", "2.0.0"), skillEntries);
         const uploadedV2 = await api(`/api/v1/items/${skillSlug}/versions`, {jar: authorJar, form: uploadForm(skillZipV2, "第二版")});
         expect(uploadedV2.status).toBe(200);
 
@@ -306,16 +349,17 @@ describe("API v1 主体流程", () => {
 
         const missingEntry = await api(`/api/v1/items/${profileSlug}/versions`, {
             jar: authorJar,
-            form: uploadForm(buildPackageZip({manifestVersion: 1, type: "profile", name: "mini-writer", version: 1}, {"mini-writer.home/notes.md": profileEntries["mini-writer.home/notes.md"] ?? new Uint8Array()})),
+            form: uploadForm(buildPackageZip(agentPackage("profile", "mini-writer", "1.0.0"), {"mini-writer.home/notes.md": profileEntries["mini-writer.home/notes.md"] ?? new Uint8Array()})),
         });
         expect(missingEntry.status).toBe(400);
         expect(((await missingEntry.json()) as {message?: string}).message).toContain("mini-writer.profile.tsx");
 
-        profileZipV1 = buildPackageZip({manifestVersion: 1, type: "profile", name: "mini-writer", version: 1, minAppVersion: "0.5.6"}, profileEntries);
+        profileZipV1 = buildPackageZip(agentPackage("profile", "mini-writer", "1.0.0", "0.5.6"), profileEntries);
         const uploadedProfile = await api(`/api/v1/items/${profileSlug}/versions`, {jar: authorJar, form: uploadForm(profileZipV1)});
         expect(uploadedProfile.status).toBe(200);
         const profileVersion = (await uploadedProfile.json()) as ItemVersionDto;
         expect(profileVersion.minAppVersion).toBe("0.5.6");
+        expect(profileVersion.containsExecutableCode).toBe(true);
     });
 
     it("公开列表 / 筛选 / 搜索 / 详情 / 版本列表可见（无需登录）", async () => {
@@ -514,7 +558,7 @@ describe("API v1 主体流程", () => {
         // 作者也不能给 removed 条目传新版本
         const uploadAttempt = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
-            form: uploadForm(buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 3}, skillEntries)),
+            form: uploadForm(buildPackageZip(agentPackage("skill", "stop-slop", "3.0.0"), skillEntries)),
         });
         expect(uploadAttempt.status).toBe(403);
 
@@ -548,8 +592,8 @@ describe("API v1 主体流程", () => {
     });
 
     it("并发上传同版本：恰好一个成功，下载字节与成功记录一致", async () => {
-        const zipA = buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 3}, {...skillEntries, "SKILL.md": strToU8("# race A")});
-        const zipB = buildPackageZip({manifestVersion: 1, type: "skill", name: "stop-slop", version: 3}, {...skillEntries, "SKILL.md": strToU8("# race B")});
+        const zipA = buildPackageZip(agentPackage("skill", "stop-slop", "3.0.0"), {...skillEntries, "SKILL.md": strToU8("---\nname: stop-slop\ndescription: race A\n---\n\n# race A")});
+        const zipB = buildPackageZip(agentPackage("skill", "stop-slop", "3.0.0"), {...skillEntries, "SKILL.md": strToU8("---\nname: stop-slop\ndescription: race B\n---\n\n# race B")});
 
         const [a, b] = await Promise.all([
             api(`/api/v1/items/${skillSlug}/versions`, {jar: authorJar, form: uploadForm(zipA)}),
@@ -616,6 +660,7 @@ describe("API v1 主体流程", () => {
 
         // 不存在的 path 404
         expect((await api(`/api/v1/items/${skillSlug}/file-content?path=nope.md`)).status).toBe(404);
+        expect((await api(`/api/v1/items/${skillSlug}/files?version=9.9.9`)).status).toBe(404);
 
         // 预览不递增下载计数
         const after = (await (await api(`/api/v1/items/${skillSlug}`)).json()) as WorkshopItemDto;
@@ -646,10 +691,10 @@ describe("API v1 主体流程", () => {
         };
         const uploaded = await api(`/api/v1/items/${workflowSlug}/versions`, {
             jar: authorJar,
-            form: uploadForm(buildPackageZip(packageJson, {"workflow.ts": strToU8("export default defineWorkflow({});")})),
+            form: uploadForm(buildPackageZip(packageJson, {"workflow.ts": strToU8(`export default { key: "${workflowSlug}", async run() { return {}; } };`)})),
         });
         expect(uploaded.status).toBe(200);
-        expect(((await uploaded.json()) as ItemVersionDto).version).toBe("1.0.0");
+        expect((await uploaded.json()) as ItemVersionDto).toMatchObject({version: "1.0.0", containsExecutableCode: true});
 
         const imported = await api(`/api/v1/items/${workflowSlug}/versions`, {
             jar: authorJar,
@@ -663,7 +708,19 @@ describe("API v1 主体流程", () => {
             form: uploadForm(buildPackageZip({...packageJson, version: "1.1.0", dependencies: {x: "1.0.0"}}, {"workflow.ts": strToU8("export default {};")})),
         });
         expect(dependencies.status).toBe(400);
-        expect(((await dependencies.json()) as {message?: string}).message).toContain("不能声明运行时或开发依赖");
+        expect(((await dependencies.json()) as {message?: string}).message).toContain("workflow 不能声明 dependencies");
+
+        const buildVersion = "1.1.0+build.1";
+        const buildUploaded = await api(`/api/v1/items/${workflowSlug}/versions`, {
+            jar: authorJar,
+            form: uploadForm(buildPackageZip({...packageJson, version: buildVersion}, {
+                "workflow.ts": strToU8(`export default { key: "${workflowSlug}", run() { return {}; } };`),
+            })),
+        });
+        expect(buildUploaded.status, await buildUploaded.clone().text()).toBe(200);
+        const buildFiles = await api(`/api/v1/items/${workflowSlug}/files?version=${encodeURIComponent(buildVersion)}`);
+        expect(buildFiles.status).toBe(200);
+        expect(((await buildFiles.json()) as PackageFileListDto).version).toBe(buildVersion);
     });
 
     it("admin 精选：打标后 featured=1 过滤命中；非 admin 被拒", async () => {

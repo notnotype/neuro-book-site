@@ -17,7 +17,7 @@ export default defineEventHandler(async (event): Promise<PublicUserDto> => {
     }
 
     const items = await prisma.workshopItem.findMany({
-        where: {authorId: user.id, status: "published"},
+        where: {authorId: user.id, status: "published", versions: {some: {}}},
         orderBy: {updatedAt: "desc"},
         include: itemDtoInclude,
     });

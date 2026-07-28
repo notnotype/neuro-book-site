@@ -120,6 +120,16 @@ REQUIRED_BYTES="$((DATA_BYTES + RESERVED_BYTES))"
 printf '拉取目标镜像：%s\n' "$NEW_IMAGE"
 docker image pull "$NEW_IMAGE"
 
+printf '使用目标镜像执行 Agent 资产归档只读 preflight。\n'
+docker run --rm \
+    --network none \
+    --read-only \
+    --tmpfs /tmp:size=64m,mode=1777 \
+    --env-file .env \
+    --volume "$DEPLOY_ROOT/data:/data:ro" \
+    --entrypoint node \
+    "$NEW_IMAGE" /app/dist/migrate-agent-assets.mjs --preflight
+
 AVAILABLE_BYTES="$(df -PB1 -- "$DEPLOY_ROOT" | awk 'NR == 2 {print $4}')"
 [[ "$AVAILABLE_BYTES" -ge "$REQUIRED_BYTES" ]] \
     || fail "拉取镜像后空间不足：available=$AVAILABLE_BYTES required=$REQUIRED_BYTES，停止升级。"

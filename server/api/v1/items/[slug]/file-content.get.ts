@@ -1,6 +1,6 @@
 import type {PackageFileContentDto} from "../../../../../shared/dto/workshop.dto";
 import {requirePublishedItem, requireSlugParam, resolveItemVersion} from "../../../../utils/workshop";
-import {readVersionZip} from "../../../../utils/workshop-files";
+import {versionZipPath} from "../../../../utils/workshop-files";
 import {isPreviewableFile, readPackageEntry} from "../../../../utils/workshop-package";
 import {PackageFileContentQuerySchema, validateQuery} from "../../../../utils/workshop-dto";
 
@@ -14,8 +14,7 @@ export default defineEventHandler(async (event): Promise<PackageFileContentDto> 
     const query = validateQuery(event, PackageFileContentQuerySchema);
     const version = await resolveItemVersion(item, query.version);
 
-    const bytes = await readVersionZip(item.id, version.ordinal);
-    const data = readPackageEntry(new Uint8Array(bytes), query.path);
+    const data = await readPackageEntry(versionZipPath(item.id, version.ordinal), query.path);
     if (!data) {
         throw createError({statusCode: 404, message: "包内不存在该文件"});
     }
@@ -23,5 +22,14 @@ export default defineEventHandler(async (event): Promise<PackageFileContentDto> 
         throw createError({statusCode: 400, message: "该文件是二进制或超过预览大小上限，不支持在线预览"});
     }
 
-    return {path: query.path, size: data.byteLength, content: new TextDecoder().decode(data)};
+    let content: string;
+    try {
+        content = new TextDecoder("utf-8", {fatal: true}).decode(data);
+    } catch {
+        throw createError({statusCode: 400, message: "该文件不是合法 UTF-8 文本，不支持在线预览"});
+    }
+    if (content.includes("\0")) {
+        throw createError({statusCode: 400, message: "该文件是二进制内容，不支持在线预览"});
+    }
+    return {path: query.path, size: data.byteLength, content};
 });

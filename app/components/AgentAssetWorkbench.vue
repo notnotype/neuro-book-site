@@ -2,8 +2,8 @@
 import {computed, onMounted, ref} from "vue";
 import type {FileTreeMove, FileTreeNode, SegmentedControlOption, SegmentedControlValue} from "@notnotype/nb-ui/components";
 import type {AgentAssetType} from "../../shared/agent-asset-package";
-import {packageRunsCode} from "../../shared/agent-asset-package";
-import type {DraftEntry, PackageDraft, PackageWorkbenchState} from "../utils/workshop-package";
+import {AGENT_ASSET_LIMITS, packageRunsCode} from "../../shared/agent-asset-package";
+import type {DraftEntry, DraftValidationExpectation, PackageDraft, PackageWorkbenchState} from "../utils/workshop-package";
 import {
     addDraftEntry,
     buildDraftZip,
@@ -20,7 +20,9 @@ import {
     parseDraftPackage,
     renameDraftEntry,
     updateDraftFile,
+    updateDraftIdentity,
     updateDraftPackage,
+    validateDraftPackage,
 } from "../utils/workshop-package";
 
 type BrowserFileEntry = {
@@ -48,12 +50,16 @@ const props = withDefaults(defineProps<{
     initialName?: string;
     initialVersion?: string;
     lockedType?: boolean;
+    lockedIdentity?: boolean;
+    latestVersion?: string;
 }>(), {
     initialBytes: undefined,
     initialType: "skill",
     initialName: "new-asset",
     initialVersion: "1.0.0",
     lockedType: false,
+    lockedIdentity: false,
+    latestVersion: undefined,
 });
 
 const emit = defineEmits<{(event: "change", state: PackageWorkbenchState): void}>();
@@ -64,6 +70,8 @@ const dirty = ref(false);
 const selectedId = ref<string | null>("package.json");
 const expandedIds = ref<string[]>([]);
 const localError = ref("");
+let validationRevision = 0;
+let identityRevision = 0;
 const directoryInput = ref<HTMLInputElement | null>(null);
 const directoryZipInput = ref<HTMLInputElement | null>(null);
 const packageZipInput = ref<HTMLInputElement | null>(null);
@@ -74,6 +82,12 @@ const parsed = computed(() => parseDraftPackage(draft.value));
 const packageJson = computed(() => parsed.value.ok ? parsed.value.packageJson : null);
 const selectedText = computed(() => isEditableText(selectedEntry.value) ? new TextDecoder().decode(selectedEntry.value?.bytes) : null);
 const executable = computed(() => packageJson.value ? packageRunsCode(packageJson.value) : false);
+const validationExpectation = computed<DraftValidationExpectation | undefined>(() => props.lockedType
+    ? {
+          type: props.initialType,
+          ...(props.lockedIdentity ? {name: props.initialName, latestVersion: props.latestVersion} : {}),
+      }
+    : undefined);
 const typeOptions = computed<SegmentedControlOption[]>(() => [
     {label: "Skill", value: "skill", disabled: props.lockedType && packageJson.value?.neurobook.assetType !== "skill"},
     {label: "Workflow", value: "workflow", disabled: props.lockedType && packageJson.value?.neurobook.assetType !== "workflow"},
@@ -93,21 +107,39 @@ function commit(next: PackageDraft, markDirty = true): void {
     publishState();
 }
 
-/** 同步完整工作台状态；package.json 无效时 packageJson 为 null。 */
+/** 同步基础状态，并异步运行共享 TypeScript AST 校验。 */
 function publishState(): void {
     const result = parseDraftPackage(draft.value);
+    const revision = ++validationRevision;
+    if (!result.ok) {
+        emit("change", {draft: draft.value, packageJson: null, error: result.error, validating: false, dirty: dirty.value});
+        return;
+    }
     emit("change", {
         draft: draft.value,
-        packageJson: result.ok ? result.packageJson : null,
-        error: result.ok ? "" : result.error,
+        packageJson: result.packageJson,
+        error: "",
+        validating: true,
         dirty: dirty.value,
+    });
+    void validateDraftPackage(draft.value, validationExpectation.value).then((validated) => {
+        if (revision !== validationRevision) {
+            return;
+        }
+        emit("change", {
+            draft: draft.value,
+            packageJson: validated.ok ? validated.packageJson : result.packageJson,
+            error: validated.ok ? "" : validated.error,
+            validating: false,
+            dirty: dirty.value,
+        });
     });
 }
 
 /** 详情或更新页初始化 ZIP；新建页使用模板。 */
-function initialize(): void {
+async function initialize(): Promise<void> {
     if (props.initialBytes) {
-        const imported = draftFromZip(props.initialBytes);
+        const imported = await draftFromZip(props.initialBytes);
         if (imported.ok) {
             draft.value = imported.draft;
             const packageResult = parseDraftPackage(imported.draft);
@@ -212,9 +244,18 @@ function moveEntry(move: FileTreeMove): void {
     selectedId.value = result.selectedPath;
 }
 
-/** 结构化修改包名；Profile 入口会同步重命名。 */
-function setPackageName(value: string): void {
-    commit(updateDraftPackage(draft.value, {name: value.trim()}));
+/** 结构化修改包名，并同步三类入口源码中的安装身份。 */
+async function setPackageName(value: string): Promise<void> {
+    const revision = ++identityRevision;
+    const result = await updateDraftIdentity(draft.value, value.trim());
+    if (revision !== identityRevision) {
+        return;
+    }
+    if (!result.ok) {
+        localError.value = result.error;
+        return;
+    }
+    commit(result.draft);
 }
 
 /** 修改自定义 SemVer；非法值会让发布按钮保持禁用。 */
@@ -279,7 +320,7 @@ async function importFiles(files: File[]): Promise<void> {
 
 /** 导入目录 ZIP，自动剥离常见的单层顶级文件夹。 */
 async function importDirectoryZip(file: File): Promise<void> {
-    const imported = draftFromZip(new Uint8Array(await file.arrayBuffer()), true);
+    const imported = await draftFromZip(file, true);
     if (!imported.ok) {
         localError.value = imported.error;
         return;
@@ -304,9 +345,14 @@ async function importDirectoryZip(file: File): Promise<void> {
 
 /** 导入完整包会替换整个草稿，但允许先导入不完整包再在线修正。 */
 async function importPackageZip(file: File): Promise<void> {
-    const imported = draftFromZip(new Uint8Array(await file.arrayBuffer()));
+    const imported = await draftFromZip(file);
     if (!imported.ok) {
         localError.value = imported.error;
+        return;
+    }
+    const validated = await validateDraftPackage(imported.draft, validationExpectation.value);
+    if (!validated.ok) {
+        localError.value = validated.error;
         return;
     }
     if (dirty.value && !window.confirm("导入完整包会替换当前草稿，是否继续？")) {
@@ -318,8 +364,8 @@ async function importPackageZip(file: File): Promise<void> {
 }
 
 /** 导出当前完整包，不经过服务器。 */
-function exportPackage(): void {
-    const result = buildDraftZip(draft.value, packageJson.value?.name ?? "agent-asset");
+async function exportPackage(): Promise<void> {
+    const result = await buildDraftZip(draft.value, packageJson.value?.name ?? "agent-asset", validationExpectation.value);
     if (!result.ok) {
         localError.value = result.error;
         return;
@@ -361,6 +407,11 @@ async function handleDrop(event: DragEvent): Promise<void> {
         return;
     }
     const located = (await Promise.all(roots.map((entry) => readBrowserEntry(entry)))).flat();
+    if (located.length > AGENT_ASSET_LIMITS.entries
+        || located.reduce((total, item) => total + item.file.size, 0) > AGENT_ASSET_LIMITS.uncompressedBytes) {
+        localError.value = "拖入内容超过 500 个文件或 100 MiB 上限";
+        return;
+    }
     const entries: DraftEntry[] = [];
     for (const item of located) {
         entries.push({path: item.path, kind: "file", bytes: new Uint8Array(await item.file.arrayBuffer())});
@@ -382,7 +433,7 @@ async function handleDrop(event: DragEvent): Promise<void> {
     commit(merged.draft);
 }
 
-onMounted(initialize);
+onMounted(() => void initialize());
 </script>
 
 <template>
@@ -425,7 +476,7 @@ onMounted(initialize);
                     <FormField label="资产类型">
                         <SegmentedControl :model-value="packageJson.neurobook.assetType" :options="typeOptions" aria-label="资产类型" @update:model-value="changeType" />
                     </FormField>
-                    <FormField label="安装名" description="kebab-case；Profile 入口会同步重命名。">
+                    <FormField label="安装名" :description="packageJson.neurobook.assetType === 'profile' ? '小写点分 key；每段可使用连字符，Profile 入口会同步重命名。' : 'kebab-case；固定入口会同步重命名。'">
                         <FormInput :model-value="packageJson.name" @update:model-value="setPackageName" />
                     </FormField>
                     <FormField label="版本" description="使用 SemVer。">

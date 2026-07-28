@@ -107,7 +107,10 @@ async function loadList(targetVersion: string, targetPath: string): Promise<void
     const generation = ++requestGeneration;
     listLoading.value = true;
     error.value = "";
+    files.value = [];
     active.value = null;
+    version.value = targetVersion;
+    selectedPath.value = targetPath;
     try {
         const result = await api.getPackageFiles(props.slug, targetVersion);
         if (generation !== requestGeneration) {
@@ -121,7 +124,6 @@ async function loadList(targetVersion: string, targetPath: string): Promise<void
         }));
         if (targetPath && !result.files.some((file) => file.path === targetPath) && !directories.has(targetPath)) {
             error.value = "指定的包内路径不存在";
-            selectedPath.value = "";
         } else {
             selectedPath.value = targetPath;
             const pathParts = targetPath.split("/").filter(Boolean);
@@ -212,11 +214,9 @@ function baseName(path: string): string {
 watch(
     () => [String(route.query.version ?? ""), String(route.query.path ?? "")],
     ([routeVersion, routePath]) => {
-        const targetVersion = props.versions.some((item) => item.version === routeVersion)
-            ? routeVersion
-            : props.versions[0]?.version ?? "";
+        const targetVersion = routeVersion || props.versions[0]?.version || "";
         if (targetVersion) {
-            if (routeVersion !== targetVersion) {
+            if (!routeVersion) {
                 void router.replace({
                     path: route.path,
                     query: {...route.query, tab: "files", version: targetVersion},

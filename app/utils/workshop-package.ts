@@ -1,8 +1,18 @@
 import type {FileTreeMove, FileTreeNode} from "@notnotype/nb-ui/components";
-import {strToU8, unzipSync, zipSync} from "fflate";
-import {inc, valid} from "semver";
+import {strToU8, Unzip, UnzipInflate, zipSync} from "fflate";
+import {gt, inc} from "semver";
+import {parseDocument} from "yaml";
 import type {AgentAssetPackageJson, AgentAssetType} from "../../shared/agent-asset-package";
-import {assetEntryPath, hasRuntimeDependencies} from "../../shared/agent-asset-package";
+import {
+    AGENT_ASSET_LIMITS,
+    assetEntryPath,
+    formatAgentAssetIssues,
+    normalizeAgentAssetPath,
+    parseAgentAssetPackage,
+    validateAgentAssetIdentity,
+    validateAgentAssetLayout,
+    validateAgentAssetSource,
+} from "../../shared/agent-asset-package";
 
 export type DraftEntry = {
     path: string;
@@ -16,6 +26,7 @@ export type PackageWorkbenchState = {
     draft: PackageDraft;
     packageJson: AgentAssetPackageJson | null;
     error: string;
+    validating: boolean;
     dirty: boolean;
 };
 
@@ -35,12 +46,6 @@ export type DraftMoveResult =
     | {ok: true; draft: PackageDraft; selectedPath: string}
     | {ok: false; error: string};
 
-const MAX_ENTRIES = 500;
-const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
-const MAX_ZIP_BYTES = 20 * 1024 * 1024;
-const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
-const WORKFLOW_IMPORT = /(?:^|\n)\s*(?:import\s+|export\s+[^\n;]+\s+from\s+)|\b(?:import|require)\s*\(/m;
 const TEXT_EXTENSIONS = new Set([
     "md", "markdown", "txt", "json", "ts", "tsx", "js", "jsx", "mjs", "cjs", "yaml", "yml", "toml",
     "css", "html", "htm", "vue", "csv", "xml", "sh", "ps1", "py", "gitignore", "npmrc",
@@ -58,8 +63,8 @@ export function createPackageDraft(assetType: AgentAssetType, name = "new-asset"
     const template = assetType === "skill"
         ? `---\nname: ${name}\ndescription: 请说明这个 Skill 何时使用。\n---\n\n# ${name}\n`
         : assetType === "workflow"
-            ? "export default defineWorkflow({\n    name: \"draft-workflow\",\n    steps: [],\n});\n"
-            : "export const profileManifest = {\n    name: \"Writer\",\n};\n";
+            ? `export default {\n    key: "${name}",\n    title: "新工作流",\n    run: async (_wf, args) => ({args}),\n};\n`
+            : `/** @jsxImportSource nbook/profile-sdk */\n/** @jsxRuntime automatic */\nimport {Type, defineAgentProfile, ProfilePrompt, System} from "nbook/profile-sdk";\n\nexport const profileManifest = {\n    key: "${name}",\n    name: "新 Agent",\n    description: "请说明这个 Agent 适合处理什么任务。",\n} as const;\n\nexport const InitialSchema = Type.Object({});\nexport const OutputSchema = Type.Object({});\n\nexport default defineAgentProfile({\n    manifest: profileManifest,\n    initialSchema: InitialSchema,\n    outputSchema: OutputSchema,\n    context() {\n        return <ProfilePrompt><System>请在这里编写系统提示词。</System></ProfilePrompt>;\n    },\n});\n`;
     return {
         entries: [
             {path: "package.json", kind: "file", bytes: encodePackageJson(packageJson)},
@@ -68,23 +73,125 @@ export function createPackageDraft(assetType: AgentAssetType, name = "new-asset"
     };
 }
 
-/** 从完整 ZIP 建立草稿，并执行路径、条目数与解压量门禁。 */
-export function draftFromZip(zipBytes: Uint8Array, stripSingleRoot = false): {ok: true; draft: PackageDraft} | {ok: false; error: string} {
-    let entries: Record<string, Uint8Array>;
-    try {
-        entries = unzipSync(zipBytes);
-    } catch {
-        return {ok: false, error: "无法解析 ZIP 文件"};
+/** 从完整 ZIP 流式建立草稿；超限或损坏时不返回任何半成品。 */
+export async function draftFromZip(input: File | Uint8Array, stripSingleRoot = false): Promise<{ok: true; draft: PackageDraft} | {ok: false; error: string}> {
+    const compressedBytes = input instanceof Uint8Array ? input.byteLength : input.size;
+    if (compressedBytes > AGENT_ASSET_LIMITS.compressedBytes) {
+        return {ok: false, error: "ZIP 超过 20 MiB 上限"};
     }
-    return normalizeDraftEntries(Object.entries(entries).map(([path, bytes]) => ({
-        path: path.endsWith("/") ? path.slice(0, -1) : path,
-        kind: path.endsWith("/") ? "directory" : "file",
-        bytes,
-    })), stripSingleRoot);
+    const entries: DraftEntry[] = [];
+    const seen = new Set<string>();
+    let outputBytes = 0;
+    let failure = "";
+    const unzip = new Unzip((file) => {
+        if (failure) {
+            file.terminate();
+            return;
+        }
+        const path = normalizeAgentAssetPath(file.name);
+        if (!path) {
+            failure = `ZIP 包含非法路径：${file.name}`;
+            file.terminate();
+            return;
+        }
+        const folded = path.toLowerCase();
+        if (seen.has(folded)) {
+            failure = `ZIP 包含重复路径：${path}`;
+            file.terminate();
+            return;
+        }
+        seen.add(folded);
+        if (seen.size > AGENT_ASSET_LIMITS.entries) {
+            failure = `文件数超过 ${AGENT_ASSET_LIMITS.entries} 个上限`;
+            file.terminate();
+            return;
+        }
+        if (file.name.endsWith("/")) {
+            entries.push({path, kind: "directory", bytes: new Uint8Array()});
+            file.ondata = (error, data) => {
+                if (error) {
+                    failure = "无法解析 ZIP 文件";
+                    return;
+                }
+                outputBytes += data.byteLength;
+                if (data.byteLength > 0) {
+                    failure = `ZIP 目录条目包含文件内容：${path}`;
+                    file.terminate();
+                    return;
+                }
+                if (outputBytes > AGENT_ASSET_LIMITS.uncompressedBytes) {
+                    failure = "文件实际总量超过 100 MiB 上限";
+                    file.terminate();
+                }
+            };
+            file.start();
+            return;
+        }
+        const chunks: Uint8Array[] = [];
+        file.ondata = (error, data, final) => {
+            if (error) {
+                failure = "无法解析 ZIP 文件";
+                return;
+            }
+            outputBytes += data.byteLength;
+            if (outputBytes > AGENT_ASSET_LIMITS.uncompressedBytes) {
+                failure = "文件实际总量超过 100 MiB 上限";
+                file.terminate();
+                return;
+            }
+            chunks.push(data.slice());
+            if (final) {
+                const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+                let offset = 0;
+                for (const chunk of chunks) {
+                    bytes.set(chunk, offset);
+                    offset += chunk.byteLength;
+                }
+                entries.push({path, kind: "file", bytes});
+            }
+        };
+        file.start();
+    });
+    unzip.register(UnzipInflate);
+
+    try {
+        if (input instanceof Uint8Array) {
+            for (let offset = 0; offset < input.byteLength && !failure; offset += 256 * 1024) {
+                unzip.push(input.subarray(offset, Math.min(offset + 256 * 1024, input.byteLength)), false);
+            }
+        } else {
+            const reader = input.stream().getReader();
+            while (!failure) {
+                const chunk = await reader.read();
+                if (chunk.done) {
+                    break;
+                }
+                unzip.push(chunk.value, false);
+            }
+            if (failure) {
+                await reader.cancel();
+            }
+        }
+        if (!failure) {
+            unzip.push(new Uint8Array(), true);
+        }
+    } catch {
+        failure = failure || "无法解析 ZIP 文件";
+    }
+    if (failure) {
+        return {ok: false, error: failure};
+    }
+    return normalizeDraftEntries(entries, stripSingleRoot);
 }
 
 /** 从浏览器多文件选择建立目录草稿片段。 */
 export async function draftEntriesFromFiles(files: File[]): Promise<{ok: true; entries: DraftEntry[]} | {ok: false; error: string}> {
+    if (files.length > AGENT_ASSET_LIMITS.entries) {
+        return {ok: false, error: `文件数超过 ${AGENT_ASSET_LIMITS.entries} 个上限`};
+    }
+    if (files.reduce((total, file) => total + file.size, 0) > AGENT_ASSET_LIMITS.uncompressedBytes) {
+        return {ok: false, error: "文件实际总量超过 100 MiB 上限"};
+    }
     const entries: DraftEntry[] = [];
     for (const file of files) {
         const relativePath = file.webkitRelativePath || file.name;
@@ -108,62 +215,74 @@ export function mergeDraftEntries(draft: PackageDraft, imported: DraftEntry[], o
     return normalized.ok ? {ok: true, draft: normalized.draft, conflicts} : normalized;
 }
 
-/** 解析 package.json 并校验三类入口及 Workflow 静态合同。 */
+export type DraftValidationExpectation = {
+    type: AgentAssetType;
+    name?: string;
+    latestVersion?: string;
+};
+
+/** 同步解析 package.json、固定入口和 Skill frontmatter。 */
 export function parseDraftPackage(draft: PackageDraft): DraftPackageResult {
     const packageEntry = draft.entries.find((entry) => entry.kind === "file" && entry.path === "package.json");
     if (!packageEntry) {
         return {ok: false, error: "根目录缺少 package.json"};
     }
-    let raw: unknown; // 外部包 JSON 在这里进入 unknown，随后逐字段收窄。
-    try {
-        raw = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(packageEntry.bytes));
-    } catch {
-        return {ok: false, error: "package.json 不是合法 UTF-8 JSON"};
+    const parsed = parseAgentAssetPackage(packageEntry.bytes);
+    if (!parsed.ok) {
+        return {ok: false, error: formatAgentAssetIssues(parsed.issues)};
     }
-    if (!isObject(raw) || typeof raw.name !== "string" || !KEBAB_CASE.test(raw.name)) {
-        return {ok: false, error: "package.json name 必须是 kebab-case"};
+    const packageJson = parsed.packageJson;
+    const files = new Map(draft.entries.filter((entry) => entry.kind === "file").map((entry) => [entry.path, {size: entry.bytes.byteLength}]));
+    const layoutIssues = validateAgentAssetLayout(packageJson, files);
+    if (layoutIssues.length > 0) {
+        return {ok: false, error: formatAgentAssetIssues(layoutIssues)};
     }
-    if (typeof raw.version !== "string" || valid(raw.version) !== raw.version) {
-        return {ok: false, error: "package.json version 必须是合法 SemVer"};
-    }
-    if (raw.type !== "module" || !isObject(raw.neurobook) || raw.neurobook.schemaVersion !== 1
-        || (raw.neurobook.assetType !== "skill" && raw.neurobook.assetType !== "workflow" && raw.neurobook.assetType !== "profile")) {
-        return {ok: false, error: "package.json 必须声明 type=module、neurobook.schemaVersion=1 和合法 assetType"};
-    }
-    if (raw.neurobook.minAppVersion !== undefined
-        && (typeof raw.neurobook.minAppVersion !== "string" || valid(raw.neurobook.minAppVersion) !== raw.neurobook.minAppVersion)) {
-        return {ok: false, error: "neurobook.minAppVersion 必须是合法 SemVer"};
-    }
-    const packageJson = raw as AgentAssetPackageJson;
     const entryPath = assetEntryPath(packageJson.neurobook.assetType, packageJson.name);
-    if (!draft.entries.some((entry) => entry.kind === "file" && entry.path === entryPath)) {
-        return {ok: false, error: `${packageJson.neurobook.assetType} 包根目录必须包含 ${entryPath}`};
-    }
-    if (packageJson.neurobook.assetType === "workflow") {
-        if (hasRuntimeDependencies(packageJson)) {
-            return {ok: false, error: "Workflow 不能声明依赖"};
-        }
-        const workflow = draft.entries.find((entry) => entry.path === "workflow.ts" && entry.kind === "file");
-        let source: string;
-        try {
-            source = new TextDecoder("utf-8", {fatal: true}).decode(workflow?.bytes);
-        } catch {
-            return {ok: false, error: "workflow.ts 不是合法 UTF-8 文本"};
-        }
-        if (WORKFLOW_IMPORT.test(source)) {
-            return {ok: false, error: "Workflow 不允许使用 import、export from 或 require"};
+    if (packageJson.neurobook.assetType === "skill") {
+        const source = draft.entries.find((entry) => entry.kind === "file" && entry.path === entryPath)?.bytes;
+        const sourceIssues = source ? validateAgentAssetSource(packageJson, source) : [];
+        if (sourceIssues.length > 0) {
+            return {ok: false, error: formatAgentAssetIssues(sourceIssues)};
         }
     }
     return {ok: true, packageJson};
 }
 
+/** 懒加载 TypeScript 后执行完整源码、身份和版本预检。 */
+export async function validateDraftPackage(draft: PackageDraft, expected?: DraftValidationExpectation): Promise<DraftPackageResult> {
+    const parsed = parseDraftPackage(draft);
+    if (!parsed.ok) {
+        return parsed;
+    }
+    const packageJson = parsed.packageJson;
+    if (expected) {
+        const identityIssues = validateAgentAssetIdentity(packageJson, {type: expected.type, ...(expected.name ? {name: expected.name} : {})});
+        if (identityIssues.length > 0) {
+            return {ok: false, error: formatAgentAssetIssues(identityIssues)};
+        }
+        if (expected.latestVersion && !gt(packageJson.version, expected.latestVersion)) {
+            return {ok: false, error: `版本必须严格高于 ${expected.latestVersion}`};
+        }
+    }
+    if (packageJson.neurobook.assetType !== "skill") {
+        const typescript = await import("typescript");
+        const entryPath = assetEntryPath(packageJson.neurobook.assetType, packageJson.name);
+        const source = draft.entries.find((entry) => entry.kind === "file" && entry.path === entryPath)?.bytes;
+        const sourceIssues = source ? validateAgentAssetSource(packageJson, source, typescript) : [];
+        if (sourceIssues.length > 0) {
+            return {ok: false, error: formatAgentAssetIssues(sourceIssues)};
+        }
+    }
+    return parsed;
+}
+
 /** 构建最终 ZIP；最终压缩字节与解压总量使用与服务端相同的上限。 */
-export function buildDraftZip(draft: PackageDraft, slug: string): DraftBuildResult {
+export async function buildDraftZip(draft: PackageDraft, slug: string, expected?: DraftValidationExpectation): Promise<DraftBuildResult> {
     const normalized = normalizeDraftEntries(draft.entries);
     if (!normalized.ok) {
         return normalized;
     }
-    const parsed = parseDraftPackage(normalized.draft);
+    const parsed = await validateDraftPackage(normalized.draft, expected);
     if (!parsed.ok) {
         return parsed;
     }
@@ -172,7 +291,7 @@ export function buildDraftZip(draft: PackageDraft, slug: string): DraftBuildResu
         zipEntries[entry.kind === "directory" ? `${entry.path}/` : entry.path] = entry.bytes;
     }
     const bytes = zipSync(zipEntries);
-    if (bytes.byteLength > MAX_ZIP_BYTES) {
+    if (bytes.byteLength > AGENT_ASSET_LIMITS.compressedBytes) {
         return {ok: false, error: "最终 ZIP 超过 20 MiB 上限"};
     }
     return {
@@ -214,6 +333,80 @@ export function updateDraftPackage(draft: PackageDraft, patch: Partial<Pick<Agen
             return entry;
         }),
     };
+}
+
+/**
+ * 原子更新安装身份以及协议要求的源码身份。失败时返回原草稿，不留下半重命名入口。
+ */
+export async function updateDraftIdentity(
+    draft: PackageDraft,
+    name: string,
+): Promise<{ok: true; draft: PackageDraft} | {ok: false; error: string}> {
+    const parsed = parseDraftPackageLoosely(draft);
+    if (!parsed) {
+        return {ok: false, error: "package.json 当前无法解析"};
+    }
+    const previousEntry = assetEntryPath(parsed.neurobook.assetType, parsed.name);
+    const sourceEntry = draft.entries.find((entry) => entry.kind === "file" && entry.path === previousEntry);
+    if (!sourceEntry) {
+        return {ok: false, error: `包中缺少 ${previousEntry}`};
+    }
+
+    let source = new TextDecoder().decode(sourceEntry.bytes);
+    if (parsed.neurobook.assetType === "skill") {
+        const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+        if (!frontmatter) {
+            return {ok: false, error: "SKILL.md 必须以 YAML frontmatter 开头"};
+        }
+        const document = parseDocument(frontmatter[1] ?? "", {strict: true, uniqueKeys: true});
+        if (document.errors.length > 0) {
+            return {ok: false, error: `SKILL.md frontmatter 无效：${document.errors[0]?.message ?? "无法解析"}`};
+        }
+        document.set("name", name);
+        source = `---\n${document.toString().trimEnd()}\n---\n${source.slice(frontmatter[0].length)}`;
+    } else {
+        const typescript = await import("typescript");
+        const sourceFile = typescript.createSourceFile(previousEntry, source, typescript.ScriptTarget.Latest, true,
+            parsed.neurobook.assetType === "profile" ? typescript.ScriptKind.TSX : typescript.ScriptKind.TS);
+        let identity: import("typescript").Expression | null = null;
+        if (parsed.neurobook.assetType === "workflow") {
+            const assignment = sourceFile.statements.find((statement): statement is import("typescript").ExportAssignment =>
+                typescript.isExportAssignment(statement) && !statement.isExportEquals);
+            let expression = assignment?.expression;
+            while (expression && (typescript.isParenthesizedExpression(expression) || typescript.isAsExpression(expression) || typescript.isSatisfiesExpression(expression))) {
+                expression = expression.expression;
+            }
+            const object = expression && typescript.isObjectLiteralExpression(expression) ? expression : null;
+            const key = object?.properties.find((property) => property.name && (typescript.isIdentifier(property.name) || typescript.isStringLiteral(property.name)) && property.name.text === "key");
+            identity = key && typescript.isPropertyAssignment(key) ? key.initializer : null;
+            if (!identity || !(typescript.isStringLiteral(identity) || typescript.isNoSubstitutionTemplateLiteral(identity))) {
+                return {ok: false, error: "Workflow 必须直接声明静态字符串 key"};
+            }
+        } else {
+            for (const statement of sourceFile.statements) {
+                if (!typescript.isVariableStatement(statement)) {
+                    continue;
+                }
+                const declaration = statement.declarationList.declarations.find((candidate) =>
+                    typescript.isIdentifier(candidate.name) && candidate.name.text === "profileManifest");
+                let expression = declaration?.initializer;
+                while (expression && (typescript.isParenthesizedExpression(expression) || typescript.isAsExpression(expression) || typescript.isSatisfiesExpression(expression))) {
+                    expression = expression.expression;
+                }
+                const object = expression && typescript.isObjectLiteralExpression(expression) ? expression : null;
+                const key = object?.properties.find((property) => property.name && (typescript.isIdentifier(property.name) || typescript.isStringLiteral(property.name)) && property.name.text === "key");
+                identity = key && typescript.isPropertyAssignment(key) ? key.initializer : null;
+                break;
+            }
+        }
+        if (identity && (typescript.isStringLiteral(identity) || typescript.isNoSubstitutionTemplateLiteral(identity))) {
+            source = `${source.slice(0, identity.getStart(sourceFile))}${JSON.stringify(name)}${source.slice(identity.end)}`;
+        }
+    }
+
+    const next = updateDraftPackage(draft, {name});
+    const nextEntry = assetEntryPath(parsed.neurobook.assetType, name);
+    return {ok: true, draft: updateDraftFile(next, nextEntry, source)};
 }
 
 /** 根据当前版本生成 patch/minor/major 建议版本。 */
@@ -344,8 +537,8 @@ function normalizeDraftEntries(entries: DraftEntry[], stripSingleRoot = false): 
         }
     }
     working = [...working, ...syntheticDirectories];
-    if (working.length > MAX_ENTRIES) {
-        return {ok: false, error: `文件数超过 ${MAX_ENTRIES} 个上限`};
+    if (working.length > AGENT_ASSET_LIMITS.entries) {
+        return {ok: false, error: `文件数超过 ${AGENT_ASSET_LIMITS.entries} 个上限`};
     }
     let totalBytes = 0;
     const seen = new Map<string, DraftEntry>();
@@ -367,7 +560,7 @@ function normalizeDraftEntries(entries: DraftEntry[], stripSingleRoot = false): 
             parent = parentPath(parent);
         }
         totalBytes += entry.kind === "file" ? entry.bytes.byteLength : 0;
-        if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
+        if (totalBytes > AGENT_ASSET_LIMITS.uncompressedBytes) {
             return {ok: false, error: "文件实际总量超过 100 MiB 上限"};
         }
         seen.set(folded, entry);
@@ -377,14 +570,7 @@ function normalizeDraftEntries(entries: DraftEntry[], stripSingleRoot = false): 
 
 /** 返回单个相对路径的用户可读错误；空串表示合法。 */
 function validateDraftPath(path: string): string {
-    if (!path || path.includes("\0") || path.includes("\\") || path.startsWith("/") || /^[A-Za-z]:/.test(path)) {
-        return "必须是使用 / 的相对路径";
-    }
-    const parts = path.split("/");
-    if (parts.some((part) => !part || part === "." || part === ".." || /[ .]$/.test(part) || WINDOWS_RESERVED.test(part))) {
-        return "包含空段、点段、保留名或尾随空格/点";
-    }
-    return "";
+    return normalizeAgentAssetPath(path) === path ? "" : "必须是安全的 / 分隔相对路径，且不能含保留名或尾随空格/点";
 }
 
 /** 宽松读取当前 package.json，供结构化控件修正一个暂时不完整的包。 */

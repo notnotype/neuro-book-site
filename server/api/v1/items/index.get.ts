@@ -12,6 +12,7 @@ export default defineEventHandler(async (event): Promise<PageDto<WorkshopItemDto
 
     const where: Prisma.WorkshopItemWhereInput = {
         status: "published",
+        versions: {some: {}},
         ...(query.featured ? {featured: true} : {}),
         ...(query.type ? {type: query.type} : {}),
         ...(query.q

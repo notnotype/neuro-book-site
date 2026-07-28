@@ -5,7 +5,8 @@ import {mkdir, rm} from "node:fs/promises";
 import {join} from "node:path";
 import type {H3Event} from "h3";
 import {createError} from "h3";
-import {UploadVersionFieldsSchema} from "./workshop-dto";
+import type {UpdateItemRequest} from "./workshop-dto";
+import {UpdateItemRequestSchema, UploadVersionFieldsSchema} from "./workshop-dto";
 import {workshopTmpDir} from "./workshop-files";
 
 const WORKSHOP_MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -16,6 +17,7 @@ export type ParsedWorkshopUpload = {
     fileSize: number;
     sha256: string;
     changelog: string;
+    metadata?: UpdateItemRequest;
 };
 
 /**
@@ -42,7 +44,7 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
     return await new Promise<ParsedWorkshopUpload>((resolvePromise, rejectPromise) => {
         const parser = busboy({
             headers: request.headers,
-            limits: {files: 1, fields: 2, fileSize: maxBytes, fieldSize: 16 * 1024},
+            limits: {files: 1, fields: 3, fileSize: maxBytes, fieldSize: 60 * 1024},
         });
         const output = createWriteStream(tmpPath);
         const hash = createHash("sha256");
@@ -50,6 +52,7 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
         let fileName = "";
         let fileSize = 0;
         let changelog = "";
+        let metadata = "";
         let settled = false;
 
         /** 统一失败出口：终止解析，写流关闭后清理 tmp。 */
@@ -70,6 +73,9 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
         parser.on("field", (name, value) => {
             if (name === "changelog") {
                 changelog = value;
+            }
+            if (name === "metadata") {
+                metadata = value;
             }
         });
         parser.on("file", (name, file, info) => {
@@ -115,10 +121,25 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
                     fail(createError({statusCode: 400, message: "Workshop 文件必须是 .zip"}));
                     return;
                 }
-                const fields = UploadVersionFieldsSchema.safeParse({changelog});
+                const fields = UploadVersionFieldsSchema.safeParse({changelog, ...(metadata ? {metadata} : {})});
                 if (!fields.success) {
                     fail(createError({statusCode: 400, message: fields.error.issues.map((issue) => issue.message).join("；")}));
                     return;
+                }
+                let parsedMetadata: UpdateItemRequest | undefined;
+                if (fields.data.metadata) {
+                    try {
+                        const raw: unknown = JSON.parse(fields.data.metadata);
+                        const result = UpdateItemRequestSchema.safeParse(raw);
+                        if (!result.success) {
+                            fail(createError({statusCode: 400, message: result.error.issues.map((issue) => issue.message).join("；")}));
+                            return;
+                        }
+                        parsedMetadata = result.data;
+                    } catch {
+                        fail(createError({statusCode: 400, message: "metadata 必须是合法 JSON"}));
+                        return;
+                    }
                 }
                 settled = true;
                 resolvePromise({
@@ -127,6 +148,7 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
                     fileSize,
                     sha256: hash.digest("hex"),
                     changelog: fields.data.changelog,
+                    ...(parsedMetadata ? {metadata: parsedMetadata} : {}),
                 });
             });
         });

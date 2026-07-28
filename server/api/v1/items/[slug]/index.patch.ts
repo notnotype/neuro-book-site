@@ -19,6 +19,9 @@ export default defineEventHandler(async (event): Promise<WorkshopItemDto> => {
     if (item.status === "removed") {
         throw createError({statusCode: 403, message: "条目已被管理员下架，无法操作"});
     }
+    if (body.status === "published" && item.versions.length === 0) {
+        throw createError({statusCode: 409, message: "首版上传成功前不能公开条目"});
+    }
 
     const updated = await prisma.workshopItem.update({
         where: {id: item.id},

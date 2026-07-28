@@ -45,7 +45,7 @@ curl --fail --silent http://127.0.0.1:3100/api/health/live
 curl --fail --silent http://127.0.0.1:3100/api/health/ready
 ```
 
-入口脚本会先创建 SQLite 文件并执行 `prisma migrate deploy`，成功后才启动 Nitro。生产配置缺失、仍是示例值或 migration 未应用时，容器不会进入 ready。
+入口脚本会先创建 SQLite 文件、执行 `prisma migrate deploy`，再运行 `migrate-agent-assets --apply` 恢复或迁移归档；三步成功后才启动 Nitro。生产配置缺失、仍是示例值、migration 未应用，或数据库与 Workshop 归档无法证明一致时，容器不会进入 ready。
 
 管理员只初始化一次。生成 24 字节随机密码，经 stdin 交给一次性容器；密码不会进入 argv、环境变量或容器日志：
 
@@ -129,15 +129,28 @@ curl --fail --silent http://127.0.0.1:3100/api/health/ready
 
 ### Agent 资产协议迁移
 
-包含 `20260728090000_agent_asset_package` 的版本不能沿用普通自动升级流程。该 migration 会把公开整数版本映射为 SemVer，并保留原整数作为 ZIP 寻址 ordinal；随后还必须原子迁移磁盘上的旧 `nbook-package.json`。本 Task 只交付工具，不授权生产执行。后续维护窗口应固定为：
+包含 `20260728090000_agent_asset_package` 与 `20260729090000_agent_asset_publish_integrity` 的版本会把公开整数版本映射为 SemVer，并保留原整数作为 ZIP 寻址 ordinal；随后原子迁移旧 `nbook-package.json`，补齐代码风险字段和发布一致性约束。生产尚未执行，本节描述已交付的自动门禁，不构成部署授权。
 
-1. 停止站点并制作整份 `data/` 冷快照。
-2. 用新镜像的一次性容器执行 `prisma migrate deploy`，但不启动 Nitro。
-3. 运行 `node /app/dist/migrate-agent-assets.mjs` dry-run，逐行核对候选数量。
-4. 运行同一命令并加 `--apply`；确认所有候选的 `packageSchemaVersion` 都为 1，且重复 dry-run 报告 0 个版本。
-5. 启动新镜像，验收旧版下载、文件预览、Workflow 发布和 readiness。
+`upgrade-dmit.sh` 在停站和写入任何持久数据前，先用目标镜像执行只读 preflight：容器无网络、根文件系统只读、`data/` 只读挂载，只允许在 tmpfs 验证候选 ZIP。preflight 会计算旧数据库/ZIP 摘要、执行有界归档验证并报告动作；任何缺文件、摘要不符、未知 schema 或 sidecar 歧义都会在冷快照前停止升级。
 
-任一步失败都停止继续，保留日志并从同一份冷快照整体恢复数据库与 Workshop ZIP。迁移工具使用同目录临时文件和原子替换；单条数据库更新失败会恢复原 ZIP，但这不能替代升级级别的冷快照。
+preflight 通过后，自动升级才会停止站点并制作整份 `data/` 冷快照。新容器 entrypoint 依次执行 Prisma migration 与 `migrate-agent-assets --apply`：schema 0 的 `.backup` 只有匹配旧数据库摘要才会恢复，schema 1 的正式文件必须匹配新数据库摘要；无法唯一判断恢复方向时直接退出。成功后 readiness 轻量检查 schema、正式文件大小和残留 sidecar。
+
+需要单独审计目标镜像时，可在修改 `.env` 前运行与部署脚本同等的只读探针：
+
+```bash
+cd /srv/neuro-book-site
+TARGET_IMAGE='ghcr.io/notnotype/neuro-book-site@sha256:<target-digest>'
+sudo docker run --rm \
+  --network none \
+  --read-only \
+  --tmpfs /tmp:size=64m,mode=1777 \
+  --env-file .env \
+  --volume "$PWD/data:/data:ro" \
+  --entrypoint node \
+  "$TARGET_IMAGE" /app/dist/migrate-agent-assets.mjs --preflight
+```
+
+任一步失败都停止继续，保留部署目录中的 preflight/容器日志和失败数据，并由升级脚本从同一份冷快照整体恢复数据库与 Workshop ZIP。禁止只替换 SQLite、手工删除 sidecar，或在摘要不匹配时跳过 guard。
 
 ## 快速推送并升级 DMIT
 
@@ -158,8 +171,8 @@ bun run deploy:dmit -- --yes
 
 1. 拒绝非 `master`、错误 origin、未提交改动和非快进 push；执行 `git push origin HEAD:master`，永不 force push。
 2. 等待该 commit 的 `container.yml` verify 与 container job 全部成功；从公开 GHCR 的 `sha-<commit>` tag 解析完整 `@sha256:` digest。
-3. 通过远端互斥锁进入 `/srv/neuro-book-site`，先拉取镜像，再检查“当前 data 大小 + 4 GiB”余量。
-4. 停止站点制作冷快照，原子替换 `.env` 中唯一的 `NB_SITE_IMAGE`，启动并检查 loopback/public readiness 与实际容器镜像引用。
+3. 通过远端互斥锁进入 `/srv/neuro-book-site`，先拉取镜像、检查“当前 data 大小 + 4 GiB”余量，再用目标镜像和只读 data volume 执行 Agent 资产 preflight；失败时尚未停站或写数据。
+4. 停止站点制作冷快照，原子替换 `.env` 中唯一的 `NB_SITE_IMAGE`；新 entrypoint 执行 Prisma migration 与 Agent 资产 apply guard，随后检查 loopback/public readiness 与实际容器镜像引用。
 5. 新版本启动、migration、镜像身份或 readiness 任一失败时，保留失败日志和新数据目录，恢复旧 `.env` 与整份冷快照后重启旧镜像。
 
 每次尝试的 `.env` 备份、冷快照、部署回执或失败数据保存在 `/srv/neuro-book-site/ops/deployments/<UTC timestamp>/`，权限为 root-only。脚本不修改 DNS、证书、Nginx、443 或 Xray，也不删除旧镜像和历史快照。

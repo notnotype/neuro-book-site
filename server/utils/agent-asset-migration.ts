@@ -1,6 +1,5 @@
-import {strToU8, unzipSync, zipSync} from "fflate";
+import {strToU8, zipSync} from "fflate";
 import {valid} from "semver";
-import {parseWorkshopPackage} from "./workshop-package";
 
 type LegacyManifest = {
     manifestVersion: 1;
@@ -15,20 +14,18 @@ export type MigratedArchive = {
     changed: boolean;
 };
 
-/** 把旧 nbook-package.json 合并进根 package.json，并删除旧清单。 */
-export function migrateAgentAssetArchive(zipBytes: Uint8Array, databaseVersion: string): MigratedArchive {
-    const entries = unzipSync(zipBytes);
-    const legacyBytes = entries["nbook-package.json"];
+/** 把已经有界读取的旧条目合并为统一根 package.json，并删除旧清单。 */
+export function migrateAgentAssetEntries(entries: ReadonlyMap<string, Uint8Array>, databaseVersion: string): MigratedArchive {
+    const legacyBytes = entries.get("nbook-package.json");
     if (!legacyBytes) {
-        parseWorkshopPackage(zipBytes);
-        return {bytes: zipBytes, changed: false};
+        return {bytes: zipEntries(entries), changed: false};
     }
 
     const legacy = parseLegacyManifest(legacyBytes);
     if (databaseVersion !== `${legacy.version}.0.0`) {
         throw new Error(`数据库版本 ${databaseVersion} 与旧包版本 ${legacy.version} 不一致`);
     }
-    const existingPackage = parseExistingPackage(entries["package.json"]);
+    const existingPackage = parseExistingPackage(entries.get("package.json"));
     const existingNeurobook = isObject(existingPackage.neurobook) ? existingPackage.neurobook : {};
     const packageJson = {
         ...existingPackage,
@@ -42,11 +39,18 @@ export function migrateAgentAssetArchive(zipBytes: Uint8Array, databaseVersion: 
             ...(legacy.minAppVersion ? {minAppVersion: legacy.minAppVersion} : {}),
         },
     };
-    delete entries["nbook-package.json"];
-    entries["package.json"] = strToU8(`${JSON.stringify(packageJson, null, 4)}\n`);
-    const migrated = zipSync(entries);
-    parseWorkshopPackage(migrated);
-    return {bytes: migrated, changed: true};
+    const migrated = new Map(entries);
+    migrated.delete("nbook-package.json");
+    migrated.set("package.json", strToU8(`${JSON.stringify(packageJson, null, 4)}\n`));
+    return {bytes: zipEntries(migrated), changed: true};
+}
+
+function zipEntries(entries: ReadonlyMap<string, Uint8Array>): Uint8Array {
+    const files: {[path: string]: Uint8Array} = {};
+    for (const [path, bytes] of entries) {
+        files[path] = bytes;
+    }
+    return zipSync(files);
 }
 
 /** 外部 JSON 只在迁移边界进入 unknown，并立即收窄成旧清单。 */
@@ -76,7 +80,7 @@ function parseLegacyManifest(bytes: Uint8Array): LegacyManifest {
     };
 }
 
-/** 解析已有 package.json；旧 Skill 可借此保留 dependencies、scripts 与 bin。 */
+/** 解析已有 package.json；旧 Skill 借此保留依赖、脚本和命令声明。 */
 function parseExistingPackage(bytes?: Uint8Array): {[key: string]: unknown} {
     if (!bytes) {
         return {};
@@ -93,7 +97,6 @@ function parseExistingPackage(bytes?: Uint8Array): {[key: string]: unknown} {
     return raw;
 }
 
-/** 判断 JSON 值是否为普通对象。 */
 function isObject(value: unknown): value is {[key: string]: unknown} {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }

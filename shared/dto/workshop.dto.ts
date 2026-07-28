@@ -47,6 +47,7 @@ export type WorkshopItemDto = {
     likeCount: number;
     commentCount: number;
     latestVersion: string | null; // 尚未上传任何版本时为 null
+    containsExecutableCode: boolean; // 最新版本需要代码审查；无版本草稿为 false
     author: ItemAuthorDto;
     createdAt: string; // ISO 时间
     updatedAt: string; // ISO 时间
@@ -62,6 +63,7 @@ export type ItemVersionDto = {
     fileSize: number;
     sha256: string;
     minAppVersion: string | null; // null 表示作者未声明 NeuroBook 兼容下限
+    containsExecutableCode: boolean;
     createdAt: string;
 };
 
