@@ -2,7 +2,7 @@
 
 本文只覆盖应用容器。DMIT 的 DNS、证书、Nginx stream 和 Xray 443 切换必须使用 Task 128 单独的维护窗口 runbook，不能仅按本文直接改公网入口。
 
-截至 2026-07-27，公开 GHCR 的 digest `sha256:6ec29b03a086920e9259f18a4ed8403b7c188002c8d57d1f037a7fbad118c726` 已在 DMIT 匿名拉取并运行；上一 digest `sha256:77f922014080e810e9852dc49ef0e71c40ed755eb8b817a934b76e6c2d394c19` 与冷快照 `/srv/neuro-book-site/snapshot-task128-pino-20260727T163249Z.tar` 保留用于整体回滚。stdout/持久 JSONL 对账、容器重建持久性、强制轮转、压缩文件读取和新旧 digest 往返均已实际通过；DNS、证书、Nginx stream 443 与 Xray 配置没有在本轮调整。
+截至 2026-07-28，`deploy:dmit` 首次端到端升级已通过：提交 `311bfd0` 的 Actions Run `30323712154` 全绿，公开 GHCR digest `sha256:8261351c2e26e2f62d3fea386a5301cccf79bd62acb1d161a62558b371f24ea0` 从上一 digest `sha256:6ec29b03a086920e9259f18a4ed8403b7c188002c8d57d1f037a7fbad118c726` 完成冷快照升级，快照为 `/srv/neuro-book-site/ops/deployments/20260728T024146Z/data.before.tar`。同一命令第二次运行正确识别目标 digest 并幂等退出，没有停站或创建第二份快照。此处只记录首轮证据；当前线上 digest、source commit 和对应快照以服务器最新 `ops/deployments/*/deployment.txt` 为动态真相，不在源码文档中每次自引用更新。
 
 ## 目录与权限
 
@@ -151,6 +151,8 @@ bun run deploy:dmit -- --yes
 5. 新版本启动、migration、镜像身份或 readiness 任一失败时，保留失败日志和新数据目录，恢复旧 `.env` 与整份冷快照后重启旧镜像。
 
 每次尝试的 `.env` 备份、冷快照、部署回执或失败数据保存在 `/srv/neuro-book-site/ops/deployments/<UTC timestamp>/`，权限为 root-only。脚本不修改 DNS、证书、Nginx、443 或 Xray，也不删除旧镜像和历史快照。
+
+首次真实运行发现本机 GitHub CLI 不支持 `gh run list --commit`。脚本已改为列出 `master + workflow + push event` 的近期结构化结果，再用完整 `headSha` 精确匹配；兼容修复仍在任何 DMIT 写入之前 fail closed。修复后的完整升级与同 digest 幂等重跑均已通过。
 
 ## 日志与人工检查
 
