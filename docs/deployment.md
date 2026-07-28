@@ -127,6 +127,31 @@ curl --fail --silent http://127.0.0.1:3100/api/health/ready
 
 镜像回滚只需恢复旧 digest 并再次 `pull/up`。如果新版本已经执行不兼容 migration，必须停止容器、保留失败现场，并从对应冷快照整体恢复 `data/`；禁止只替换 SQLite 而保留新版本文件目录。
 
+## 快速推送并升级 DMIT
+
+仓库提供本地编排命令。它只部署已经提交且工作区干净的 `master`，不会自动创建 commit：
+
+```powershell
+# 只读检查仓库、分支、origin、gh 和 SSH alias
+bun run deploy:dmit -- --dry-run
+
+# 交互确认后执行完整流程
+bun run deploy:dmit
+
+# 自动化调用时跳过输入 deploy 的确认步骤
+bun run deploy:dmit -- --yes
+```
+
+本地需要 `git`、已登录的 `gh` 和可用的 `ssh dmit`；远端需要 `sudo -n`、Docker Compose、`flock` 与 `curl`。完整流程固定为：
+
+1. 拒绝非 `master`、错误 origin、未提交改动和非快进 push；执行 `git push origin HEAD:master`，永不 force push。
+2. 等待该 commit 的 `container.yml` verify 与 container job 全部成功；从公开 GHCR 的 `sha-<commit>` tag 解析完整 `@sha256:` digest。
+3. 通过远端互斥锁进入 `/srv/neuro-book-site`，先拉取镜像，再检查“当前 data 大小 + 4 GiB”余量。
+4. 停止站点制作冷快照，原子替换 `.env` 中唯一的 `NB_SITE_IMAGE`，启动并检查 loopback/public readiness 与实际容器镜像引用。
+5. 新版本启动、migration、镜像身份或 readiness 任一失败时，保留失败日志和新数据目录，恢复旧 `.env` 与整份冷快照后重启旧镜像。
+
+每次尝试的 `.env` 备份、冷快照、部署回执或失败数据保存在 `/srv/neuro-book-site/ops/deployments/<UTC timestamp>/`，权限为 root-only。脚本不修改 DNS、证书、Nginx、443 或 Xray，也不删除旧镜像和历史快照。
+
 ## 日志与人工检查
 
 ```bash
