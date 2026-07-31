@@ -45,6 +45,17 @@ describe("migrateAgentAssetEntries", () => {
         expect(() => migrateAgentAssetEntries(source, "3.0.0")).toThrow(/不一致/);
     });
 
+    it("为没有 frontmatter 的旧 Skill 合成最小字段并保留正文", () => {
+        const source = new Map<string, Uint8Array>([
+            ["nbook-package.json", strToU8(JSON.stringify({manifestVersion: 1, type: "skill", name: "demo-skill", version: 1}))],
+            ["SKILL.md", strToU8("# Legacy title\r\n\r\nOriginal body\r\n")],
+        ]);
+
+        const entries = unzipSync(migrateAgentAssetEntries(source, "1.0.0").bytes);
+        const skillSource = new TextDecoder().decode(entries["SKILL.md"]);
+        expect(skillSource).toBe("---\nname: demo-skill\ndescription: Legacy title\n---\n# Legacy title\r\n\r\nOriginal body\r\n");
+    });
+
     it("拒绝无效旧清单和无效已有 package.json", () => {
         expect(() => migrateAgentAssetEntries(new Map([
             ["nbook-package.json", strToU8("null")],

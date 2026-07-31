@@ -113,6 +113,12 @@
 - 最终提交审查补齐中央目录伪造边界：服务端完整扫描后的单条目大小改用实际输出，空 `bun.lock` 不能再伪造声明大小绕过；浏览器拒绝带实际内容的目录条目。版本归档落位从“检查后 rename”改为原子拒绝覆盖，消除 helper 自身的 TOCTOU 窗口。
 - NeuroBook 主仓协议补充安装身份 ADR。计划编号 `0009` 已被同一脏工作区的 Product Runtime ADR 占用，且已有 `0010`，因此使用下一个空号 `0011`；没有重编号或覆盖无关 ADR。
 
+### 2026-07-31 Production Preflight Closure
+
+- 用户授权部署后，首个目标镜像在 DMIT 停站前的只读 preflight 被两个 schema 0 Skill 拦下；它们符合旧协议，但 `SKILL.md` 没有新协议要求的 YAML frontmatter。线上容器、数据库和归档均未改变。
+- 旧包迁移现在只为“完全没有 frontmatter”的 schema 0 Skill 合成 `name` / `description`，description 取原正文第一条非空文本并保留正文；已有但损坏或身份冲突的 frontmatter 仍由统一校验器失败关闭。
+- 单元测试覆盖 CRLF 正文与 frontmatter 合成，真实 SQLite/ZIP 集成 fixture 改为无 frontmatter 旧包，继续覆盖 preflight 零写入、apply、摘要更新、幂等与 sidecar 恢复。
+
 ## Verification / Test
 
 ### nb-ui

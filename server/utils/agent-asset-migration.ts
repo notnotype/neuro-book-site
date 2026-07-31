@@ -1,5 +1,6 @@
 import {strToU8, zipSync} from "fflate";
 import {valid} from "semver";
+import {stringify} from "yaml";
 
 type LegacyManifest = {
     manifestVersion: 1;
@@ -42,7 +43,39 @@ export function migrateAgentAssetEntries(entries: ReadonlyMap<string, Uint8Array
     const migrated = new Map(entries);
     migrated.delete("nbook-package.json");
     migrated.set("package.json", strToU8(`${JSON.stringify(packageJson, null, 4)}\n`));
+    if (legacy.type === "skill") {
+        const skillSource = migrated.get("SKILL.md");
+        if (skillSource) {
+            migrated.set("SKILL.md", migrateLegacySkillSource(skillSource, legacy.name));
+        }
+    }
     return {bytes: zipEntries(migrated), changed: true};
+}
+
+/**
+ * schema 0 的 Skill 不要求 frontmatter。仅在完全缺失时补齐新协议最小字段；
+ * 已有 frontmatter 继续交给统一解析器校验，避免静默改写作者声明。
+ */
+function migrateLegacySkillSource(bytes: Uint8Array, name: string): Uint8Array {
+    let source: string;
+    try {
+        source = new TextDecoder("utf-8", {fatal: true}).decode(bytes);
+    } catch {
+        throw new Error("旧 SKILL.md 不是合法 UTF-8 文本");
+    }
+    if (/^---\r?\n/.test(source)) {
+        return bytes;
+    }
+
+    const firstContentLine = source.split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+    const description = firstContentLine
+        ?.replace(/^#{1,6}\s*/, "")
+        .trim()
+        .slice(0, 200) || `Workshop Skill ${name}`;
+    const frontmatter = stringify({name, description}, {lineWidth: 0}).trimEnd();
+    return strToU8(`---\n${frontmatter}\n---\n${source}`);
 }
 
 function zipEntries(entries: ReadonlyMap<string, Uint8Array>): Uint8Array {

@@ -60,7 +60,7 @@ async function createLegacyFixture(): Promise<Fixture> {
     const archivePath = join(filesDir, "1", "3.zip");
     const originalArchive = zipSync({
         "nbook-package.json": strToU8(JSON.stringify({manifestVersion: 1, type: "skill", name: "demo-skill", version: 3})),
-        "SKILL.md": strToU8("---\nname: demo-skill\ndescription: migration fixture\n---\n\n# demo\n"),
+        "SKILL.md": strToU8("# migration fixture\n"),
     });
     await mkdir(dirname(archivePath), {recursive: true});
     await writeFile(archivePath, originalArchive);
@@ -123,6 +123,9 @@ describe("Agent 资产真实迁移", () => {
         const entries = unzipSync(appliedArchive);
         expect(entries["nbook-package.json"]).toBeUndefined();
         expect(entries["package.json"]).toBeDefined();
+        expect(new TextDecoder().decode(entries["SKILL.md"])).toBe(
+            "---\nname: demo-skill\ndescription: migration fixture\n---\n# migration fixture\n",
+        );
         expect(await queryVersion(fixture.dbPath, "packageSchemaVersion, fileSize, sha256, containsExecutableCode"))
             .toMatchObject({
                 packageSchemaVersion: 1,
