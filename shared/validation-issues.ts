@@ -8,9 +8,11 @@ export function normalizeValidationIssues(issues: z.core.$ZodIssue[]): Validatio
         if (issue.code === "invalid_type") {
             code = "required";
         } else if (issue.code === "too_small") {
-            code = "too_short";
+            code = issue.origin === "string"
+                ? (issue.minimum === 1 ? "required" : "too_short")
+                : "below_minimum";
         } else if (issue.code === "too_big") {
-            code = "too_long";
+            code = issue.origin === "string" ? "too_long" : "above_maximum";
         } else if (issue.code === "invalid_format") {
             code = "invalid_format";
         } else if (issue.code === "custom" && issue.message === "password_mismatch") {

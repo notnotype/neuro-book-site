@@ -47,7 +47,7 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 
 - Base path：新端点全部在 `/api/v1/` 下；破坏性变更升 `/api/v2/`。
 - DTO 字段 camelCase，zod 校验（沿用现有 `shared/` DTO 模式）。
-- 错误格式：所有业务错误以 `data.error` 返回稳定机器码。Web 参数错误固定为 `validation_failed`，并附不包含输入值和 Zod 原始 message 的 `issues: [{ path, code, minimum?, maximum? }]`；可归属单个字段的业务错误可附 `field`。Web 前端只按错误码本地化，不展示服务端 `message`。**token 端点例外**仅指它继续使用 RFC 8628 风格的既有业务码（`authorization_pending` 等，见 §6.4）。
+- 错误格式：所有业务错误以 `data.error` 返回稳定机器码。Web 参数错误固定为 `validation_failed`，并附不包含输入值和 Zod 原始 message 的 `issues: [{ path, code, minimum?, maximum? }]`；`code` 固定为 `required`、`too_short`、`too_long`、`below_minimum`、`above_maximum`、`invalid_format`、`invalid_value` 或 `password_mismatch`。字符串长度使用 `too_short` / `too_long`，数字和集合上下限使用 `below_minimum` / `above_maximum`。可归属单个字段的业务错误可附 `field`。Web 前端只按错误码本地化，不展示服务端 `message`。**token 端点例外**仅指它继续使用 RFC 8628 风格的既有业务码（`authorization_pending` 等，见 §6.4）。
 - 未知 5xx 的 Web 界面显示统一本地化提示，并可附响应 `X-Request-ID` 供日志对账；服务端 message、stack、请求 body 和凭据不得回显。
 - 时间一律 ISO 8601 UTC 字符串。
 - 限流：设备码申请按 IP 限频；token 轮询必须遵守 `interval`，过快返回 `slow_down`。账号面（2026-07-22 第二轮起为正式合同，进程内固定窗口，超限 429，额度 env 可覆写供测试）：登录 10 次 / 5 分钟 / IP+用户名（`NB_LOGIN_RATE_LIMIT`；键上用户名防误伤共享出口，撒网式换名爆破由注册码准入门禁兜底）；注册（含 OAuth 补全注册，共享额度）5 次 / 小时 / IP（`NB_REGISTER_RATE_LIMIT`）；修改密码 5 次 / 小时 / 用户（`NB_PASSWORD_RATE_LIMIT`）。
@@ -95,6 +95,8 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 ### 5.2 上游 OAuth 关联（GitHub，2026-07-22 第二轮落地）
 
 冻结原则：上游身份只能**关联**到 NeuroBook 账号（`PassportIdentity` 表，§10），不能替代它作为主键；解绑后账号照常存在。GitHub 注册**仍需注册码**，可同时填写邀请码；准入门禁对 OAuth 用户不豁免。
+
+密码注册与 GitHub OAuth 是两个独立能力开关：`NUXT_PUBLIC_REGISTRATION_ENABLED` 只控制密码注册，`NUXT_PUBLIC_GITHUB_OAUTH_ENABLED` 只控制 GitHub 登录、关联与补全注册；`NB_PRIVATE_MODE=1` 时后者必须关闭。关闭密码注册不能阻断已经启用的 OAuth 补全流程。
 
 站点回调路由 `GET /auth/github`（nuxt-auth-utils OAuth handler，env `NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET`，GitHub OAuth App 回调地址 `https://<site>/auth/github`）。单路由三分支行为矩阵：
 
@@ -452,4 +454,4 @@ model InviteCode {
 
 1. 恢复应用机制（§9.5 两候选）。
 2. 站点是否需要「备份在线预览」（列 zip 清单）——倾向不做，保持 opaque。
-3. 生产何时通过 Public Invite Gate 并开放注册。代码能力已具备，但 Task 128 私有模式仍强制关闭注册与 GitHub OAuth。
+3. 生产何时启用 GitHub OAuth。密码注册已经独立开放；GitHub OAuth 仍由私有模式强制关闭，启用前需要真实 OAuth App 回调验收。

@@ -103,3 +103,36 @@
 - [x] GitHub Actions 完成 frozen install、测试、typecheck、build 与 `linux/amd64` 镜像构建。
 - [x] 部署固定 GHCR digest，并记录 Actions run、digest、冷快照和公网 smoke。
 - [ ] 未来启用 GitHub OAuth 时，用真实 OAuth App 单独验收回调、补全注册与错误回跳。
+
+## Follow-up Review: Auth Forms and Feature Gates
+
+### Findings and Decisions
+
+- 三个认证表单原本仍带原生 HTML 校验。浏览器可能在 Vue submit 之前拦截，绕过字段错误、首错聚焦和站点语言；现统一由共享 schema 校验，HTML `required` 只保留语义。
+- 登录、普通注册和 OAuth 注册原本忽略 mutation 返回的 `AuthSessionDto`，随后再读 `/api/auth/me`。第二次请求失败会把已成功创建的账号误报为失败；现在 mutation 响应直接进入共享会话状态，顶栏已有会话时也不会重复读取。
+- GitHub pending 加载曾把所有失败都解释为“没有待完成注册”。现在只把 `404 oauth_registration_missing` 视为缺失，网络或 5xx 进入可重试错误态。
+- 密码注册与 GitHub OAuth 是独立能力。普通注册与 OAuth 补全分别由页面挂载前的路由中间件门禁；关闭密码注册不再阻断已启用的 OAuth 补全。
+- 历史通知继续作为发生时快照，不做全站错误状态重构；当前认证表单及 pending 错误会随语言切换重新生成。这是为避免低收益大范围重构作出的明确妥协。
+- 不新增 ADR：账号身份、注册 DTO 和长期架构均未改变。本轮只收口既有合同的实现一致性。
+
+### Implementation
+
+- `useAuthState` 增加 `applySession()`，三个认证 mutation 直接消费权威 session；`refresh()` 只用于首次恢复会话或服务端主动改写 session 后同步。
+- `useLocalizedApiError` 增加不含 message/body 的安全快照与稳定错误码分类。GitHub 补全页使用 `loading / ready / missing / error` 四态并支持重试。
+- `ValidationIssueCode` 增加 `below_minimum` / `above_maximum`；字符串长度与数字/集合边界不再共用“过短/过长”文案。
+- GitHub OAuth 非敏感开关统一为 `NUXT_PUBLIC_GITHUB_OAUTH_ENABLED`；私有模式下配置为开启会触发生产启动失败。
+
+### Local Verification
+
+- 聚焦测试：6 个文件、30 项通过。
+- 全量测试：25 个文件、162 项通过。
+- `bun run typecheck`：通过。
+- `bun run build`：通过；仅保留首轮已记录的 sourcemap、TypeScript 懒加载大 chunk 和依赖弃用警告。
+- Playwright 桌面与 `390×844`：普通注册、登录和 OAuth 表单均为 `novalidate`，字段错误与首错聚焦正确，中英文切换会重绘当前错误，移动端无横向溢出或遮挡。
+- Playwright request mocking：认证成功后 `/api/auth/me` 请求数为 0；普通注册请求含 `displayName` 且不含 `confirmPassword`；OAuth pending 的 404、500+requestId、断网、重试和成功清理 sessionStorage 均符合合同。
+- 开关组合：密码注册关闭时 `/register` 在组件挂载前跳转且未出现表单；OAuth 开启时 `/register/github` 仍可进入。浏览器控制台 0 error / 0 warning，只有 Vue `<Suspense>` 框架 info。
+
+### Pending Delivery
+
+- [ ] 推送 `dev`，快进合入 `master`，完成 Actions `linux/amd64` 门禁与 DMIT 固定 digest 升级。
+- [ ] 部署后补记 source commit、Actions run、GHCR digest、冷快照和公网 smoke；生产不创建测试账号。

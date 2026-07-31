@@ -37,9 +37,13 @@ const userMenu = computed<DropdownItem[]>(() => {
     return items;
 });
 
-// 顶栏随布局挂载一次，刷新页面时恢复登录态
+// 顶栏随布局挂载一次；认证 mutation 已应用会话时不再重复请求。
 onMounted(() => {
-    void refresh();
+    if (!session.value.user) {
+        void refresh().catch(() => {
+            // 公开页面允许匿名使用；暂时无法恢复会话时保持未登录状态。
+        });
+    }
     document.addEventListener("click", onDocClick);
 });
 

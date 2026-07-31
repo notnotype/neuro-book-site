@@ -17,6 +17,11 @@ export function useAuthState() {
         }
     }
 
+    /** 应用登录或注册接口返回的权威 session，避免成功后再发一次可能失败的读取请求。 */
+    function applySession(nextSession: AuthSessionDto): void {
+        session.value = nextSession;
+    }
+
     async function logout(): Promise<void> {
         await $fetch("/api/auth/logout", {method: "POST"});
         session.value = {authEnabled: true, user: null};
@@ -25,6 +30,7 @@ export function useAuthState() {
     return {
         session,
         pending,
+        applySession,
         refresh,
         logout,
     };

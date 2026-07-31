@@ -2,6 +2,7 @@ import {readFileSync, readdirSync, statSync} from "node:fs";
 import {join, resolve} from "node:path";
 import {describe, expect, it} from "vitest";
 import {createPackageDraft} from "../app/utils/workshop-package";
+import {VALIDATION_ISSUE_CODES} from "../shared/dto/error.dto";
 import enUS from "../i18n/locales/en-US";
 import zhCN from "../i18n/locales/zh-CN";
 
@@ -45,6 +46,13 @@ function draftText(type: "skill" | "workflow" | "profile", path: string): string
 describe("site i18n contract", () => {
     it("keeps Simplified Chinese and English locale keys identical", () => {
         expect(localeKeys(enUS)).toEqual(localeKeys(zhCN));
+    });
+
+    it("provides both translations for every stable validation issue code", () => {
+        for (const code of VALIDATION_ISSUE_CODES) {
+            expect(code in zhCN.validation, `zh-CN validation.${code}`).toBe(true);
+            expect(code in enUS.validation, `en-US validation.${code}`).toBe(true);
+        }
     });
 
     it("detects a first-visit locale on every no-prefix entry and keeps the site cookie key", () => {

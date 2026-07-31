@@ -1,4 +1,5 @@
 import {describe, expect, it} from "vitest";
+import {z} from "zod";
 import {normalizeValidationIssues} from "../../shared/validation-issues";
 import {DisplayNameSchema, LoginRequestDtoSchema, RegisterFormSchema, RegisterRequestDtoSchema, UsernameSchema} from "../../shared/auth-schema";
 
@@ -53,5 +54,24 @@ describe("auth DTO schemas", () => {
 
     it("rejects register payload without registration code", () => {
         expect(RegisterRequestDtoSchema.safeParse({username: "demo-user", displayName: "Demo User", password: "password123"}).success).toBe(false);
+    });
+
+    it("distinguishes string lengths from numeric and collection bounds", () => {
+        const schema = z.object({
+            title: z.string().min(2).max(4),
+            count: z.number().min(1).max(5),
+            tags: z.array(z.string()).min(1).max(2),
+            requiredText: z.string().min(1),
+        });
+        const result = schema.safeParse({title: "x", count: 0, tags: ["a", "b", "c"], requiredText: ""});
+        expect(result.success).toBe(false);
+        if (result.success) return;
+
+        expect(normalizeValidationIssues(result.error.issues)).toEqual(expect.arrayContaining([
+            {path: "title", code: "too_short", minimum: 2},
+            {path: "count", code: "below_minimum", minimum: 1},
+            {path: "tags", code: "above_maximum", maximum: 2},
+            {path: "requiredText", code: "required", minimum: 1},
+        ]));
     });
 });

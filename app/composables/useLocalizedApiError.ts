@@ -1,4 +1,4 @@
-import type {ApiErrorDataDto, ValidationIssueDto} from "../../shared/dto/error.dto";
+import {VALIDATION_ISSUE_CODES, type ApiErrorDataDto, type ValidationIssueDto} from "../../shared/dto/error.dto";
 
 type ApiResponseBody = {
     data?: ApiErrorDataDto;
@@ -20,12 +20,53 @@ export type LocalizedFormError = {
     message: string;
 };
 
-/** 从外部请求异常中只读取受信任的稳定错误数据，不消费 message。 */
-function inspect(error: unknown): {data?: ApiErrorDataDto; status: number; requestId: string} {
+/** 可跨语言切换重新渲染的安全错误快照；不持有请求 body 或服务端 message。 */
+export type ApiErrorSnapshot = {
+    kind: "api_error_snapshot";
+    errorCode: string;
+    field: string;
+    issues: ValidationIssueDto[];
+    status: number;
+    requestId: string;
+};
+
+/** 判断调用方传入的值是否已经是本模块生成的安全快照。 */
+function isSnapshot(error: unknown): error is ApiErrorSnapshot {
+    return typeof error === "object" && error !== null
+        && "kind" in error && error.kind === "api_error_snapshot";
+}
+
+/** 从同源 API 响应复制有限 issue 字段；外部响应形状未知，因此在边界处逐项检查。 */
+function copyIssues(issues: unknown): ValidationIssueDto[] {
+    if (!Array.isArray(issues)) return [];
+    return issues.flatMap((issue) => {
+        if (typeof issue !== "object" || issue === null) return [];
+        const candidate = issue as {path?: unknown; code?: unknown; minimum?: unknown; maximum?: unknown};
+        if (typeof candidate.path !== "string"
+            || typeof candidate.code !== "string"
+            || !VALIDATION_ISSUE_CODES.includes(candidate.code as ValidationIssueDto["code"])) {
+            return [];
+        }
+        return [{
+            path: candidate.path,
+            code: candidate.code as ValidationIssueDto["code"],
+            ...(typeof candidate.minimum === "number" ? {minimum: candidate.minimum} : {}),
+            ...(typeof candidate.maximum === "number" ? {maximum: candidate.maximum} : {}),
+        }];
+    });
+}
+
+/** 从外部请求异常中只复制稳定错误数据，不消费 message。 */
+function inspect(error: unknown): ApiErrorSnapshot {
+    if (isSnapshot(error)) return error;
     const candidate = error as FetchErrorLike;
     const body = candidate.response?._data ?? candidate.data;
+    const data = body?.data;
     return {
-        data: body?.data,
+        kind: "api_error_snapshot",
+        errorCode: typeof data?.error === "string" ? data.error : "",
+        field: typeof data?.field === "string" ? data.field : "",
+        issues: copyIssues(data?.issues),
         status: candidate.response?.status ?? candidate.statusCode ?? candidate.status ?? 0,
         requestId: candidate.response?.headers?.get("x-request-id") ?? "",
     };
@@ -45,8 +86,8 @@ export function useLocalizedApiError() {
     /** 把请求异常解析为不会泄露服务端 message 的本地化文案。 */
     function resolve(error: unknown, fallbackKey: string): string {
         const inspected = inspect(error);
-        if (inspected.data?.error) {
-            const key = `errors.api.${inspected.data.error}`;
+        if (inspected.errorCode) {
+            const key = `errors.api.${inspected.errorCode}`;
             if (te(key)) {
                 return t(key);
             }
@@ -62,14 +103,14 @@ export function useLocalizedApiError() {
     function form(error: unknown, fallbackKey: string): LocalizedFormError {
         const inspected = inspect(error);
         const fields: {[field: string]: string} = {};
-        for (const issue of inspected.data?.issues ?? []) {
+        for (const issue of inspected.issues) {
             if (issue.path && !fields[issue.path]) {
                 fields[issue.path] = issueMessage(issue);
             }
         }
-        if (inspected.data?.field && inspected.data.error) {
-            const key = `errors.api.${inspected.data.error}`;
-            fields[inspected.data.field] = te(key) ? t(key) : t(fallbackKey);
+        if (inspected.field && inspected.errorCode) {
+            const key = `errors.api.${inspected.errorCode}`;
+            fields[inspected.field] = te(key) ? t(key) : t(fallbackKey);
         }
         return {
             fields,
@@ -77,5 +118,15 @@ export function useLocalizedApiError() {
         };
     }
 
-    return {resolve, form, issueMessage};
+    /** 保存可在语言切换后重新翻译的有限错误信息。 */
+    function snapshot(error: unknown): ApiErrorSnapshot {
+        return inspect(error);
+    }
+
+    /** 按稳定错误码分类，不让页面读取 $fetch 的内部响应形状。 */
+    function hasCode(error: unknown, code: string): boolean {
+        return inspect(error).errorCode === code;
+    }
+
+    return {resolve, form, issueMessage, snapshot, hasCode};
 }

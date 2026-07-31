@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import {nextTick, reactive, ref} from "vue";
 import {RegisterFormSchema, type RegisterForm} from "../../../shared/auth-schema";
+import type {AuthSessionDto} from "../../../shared/dto/auth.dto";
+import type {ApiErrorSnapshot} from "../../composables/useLocalizedApiError";
 import {normalizeValidationIssues} from "../../../shared/validation-issues";
 import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 type RegisterField = keyof RegisterForm;
 
-definePageMeta({layout: false});
+definePageMeta({layout: false, middleware: "registration-enabled"});
 
-const {t} = useI18n();
+const {t, locale} = useI18n();
 useHead(() => ({title: t("auth.registerTitle")}));
 
-const {refresh} = useAuthState();
+const {applySession} = useAuthState();
 const notification = useNotification();
 const localizedError = useLocalizedApiError();
 const route = useRoute();
@@ -26,14 +28,9 @@ const registrationCode = ref(typeof route.query.registrationCode === "string" ? 
 const inviteCode = ref(typeof route.query.inviteCode === "string" ? route.query.inviteCode : "");
 const busy = ref(false);
 const errorMsg = ref("");
+const lastServerError = ref<ApiErrorSnapshot | null>(null);
 const fieldErrors = reactive<{[field in RegisterField]?: string}>({});
 const fieldOrder: RegisterField[] = ["displayName", "username", "password", "confirmPassword", "registrationCode", "inviteCode"];
-
-onMounted(() => {
-    if (!isRuntimeFlagEnabled(publicConfig.registrationEnabled)) {
-        void navigateTo("/login", {replace: true});
-    }
-});
 
 /** 读取当前表单快照；邀请码空串在 HTTP 提交时省略。 */
 function values(): RegisterForm {
@@ -86,9 +83,25 @@ async function focusFirstError(): Promise<void> {
     }
 }
 
+/** 语言切换时只重绘当前可见错误，不提前展示其它字段。 */
+function retranslateVisibleErrors(): void {
+    const visibleFields = fieldOrder.filter((field) => fieldErrors[field]);
+    const hadMessage = errorMsg.value !== "";
+    for (const field of visibleFields) validateField(field);
+    if (!lastServerError.value) return;
+    const resolved = localizedError.form(lastServerError.value, "auth.registerFailed");
+    for (const field of visibleFields) {
+        if (!fieldErrors[field] && resolved.fields[field]) fieldErrors[field] = resolved.fields[field];
+    }
+    if (hadMessage) errorMsg.value = resolved.message;
+}
+
+watch(locale, retranslateVisibleErrors);
+
 async function submit(): Promise<void> {
     busy.value = true;
     errorMsg.value = "";
+    lastServerError.value = null;
     let shouldFocusError = false;
     try {
         const result = validateForm();
@@ -97,12 +110,13 @@ async function submit(): Promise<void> {
             return;
         }
         const {confirmPassword: _confirmPassword, ...body} = result.data;
-        await $fetch("/api/auth/register", {method: "POST", body});
-        await refresh();
+        const session = await $fetch<AuthSessionDto>("/api/auth/register", {method: "POST", body});
+        applySession(session);
         notification.success(t("auth.registerSuccess"));
         await navigateTo("/");
     } catch (error) {
-        const resolved = localizedError.form(error, "auth.registerFailed");
+        lastServerError.value = localizedError.snapshot(error);
+        const resolved = localizedError.form(lastServerError.value, "auth.registerFailed");
         Object.assign(fieldErrors, resolved.fields);
         errorMsg.value = resolved.message;
         shouldFocusError = true;
@@ -126,7 +140,7 @@ function startGitHubRegister(): void {
     <main class="relative flex min-h-screen items-center justify-center bg-[var(--bg-main)] p-6 text-[var(--text-main)]">
         <div class="absolute right-4 top-4"><LocaleSwitcher /></div>
         <Panel class="w-full max-w-sm">
-            <form ref="formRef" class="space-y-4" @submit.prevent="submit">
+            <form ref="formRef" class="space-y-4" novalidate @submit.prevent="submit">
             <NuxtLink to="/" class="flex items-center justify-center gap-2 font-semibold"><span class="i-lucide-box h-5 w-5 text-[var(--accent-main)]"></span>NeuroBook</NuxtLink>
             <h1 class="text-center text-lg font-semibold">{{ t("auth.registerTitle") }}</h1>
             <FormField :label="t('auth.displayName')" :description="t('auth.displayNameDescription')" :error="fieldErrors.displayName" required><FormInput v-model="displayName" name="displayName" autocomplete="name" :maxlength="50" @blur="validateField('displayName')" /></FormField>

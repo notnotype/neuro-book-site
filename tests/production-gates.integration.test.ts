@@ -31,7 +31,7 @@ function productionEnv(targetPort: number): NodeJS.ProcessEnv {
         NB_TRUSTED_PROXY_ADDRESSES: "127.0.0.1",
         NB_PRIVATE_MODE: "1",
         NUXT_PUBLIC_REGISTRATION_ENABLED: "1",
-        NB_GITHUB_OAUTH_ENABLED: "0",
+        NUXT_PUBLIC_GITHUB_OAUTH_ENABLED: "0",
         NB_LOG_LEVEL: "info",
         NB_LOG_FILE: logFile,
         NB_STORAGE_MAX_BYTES: String(6 * 1024 * 1024 * 1024),

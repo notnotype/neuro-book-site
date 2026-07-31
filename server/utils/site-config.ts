@@ -49,7 +49,7 @@ export function isRegistrationEnabled(): boolean {
 
 /** 私有模式下 GitHub OAuth 强制关闭；开发环境可显式或默认开启。 */
 export function isGitHubOAuthEnabled(): boolean {
-    return !isPrivateSite() && envBoolean("NB_GITHUB_OAUTH_ENABLED", runtimeNodeEnv() !== "production");
+    return !isPrivateSite() && envBoolean("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", runtimeNodeEnv() !== "production");
 }
 
 /**
@@ -133,6 +133,10 @@ export function productionConfigErrors(): string[] {
         errors.push("NB_TRUSTED_PROXY_ADDRESSES 必须至少包含一个可信直连代理 IP");
     }
     requireOptionalBoolean(errors, "NUXT_PUBLIC_REGISTRATION_ENABLED");
+    requireOptionalBoolean(errors, "NUXT_PUBLIC_GITHUB_OAUTH_ENABLED");
+    if (isPrivateSite() && envBoolean("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", false)) {
+        errors.push("NB_PRIVATE_MODE=1 时 NUXT_PUBLIC_GITHUB_OAUTH_ENABLED 必须关闭");
+    }
     if (!isPrivateSite()) {
         errors.push("私有内测要求 NB_PRIVATE_MODE=1");
     }

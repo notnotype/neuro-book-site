@@ -27,7 +27,7 @@ describe("site feature gates", () => {
     it("生产环境默认启用私有模式并关闭注册与 GitHub OAuth", () => {
         vi.stubEnv("NODE_ENV", "production");
         vi.stubEnv("NB_PRIVATE_MODE", "");
-        vi.stubEnv("NB_GITHUB_OAUTH_ENABLED", "1");
+        vi.stubEnv("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", "1");
         vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", undefined);
 
         expect(isPrivateSite()).toBe(true);
@@ -51,6 +51,17 @@ describe("site feature gates", () => {
         vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "false");
 
         expect(isRegistrationEnabled()).toBe(false);
+    });
+
+    it("公开模式使用与浏览器相同的 GitHub OAuth 开关", () => {
+        vi.stubEnv("NODE_ENV", "development");
+        vi.stubEnv("NB_PRIVATE_MODE", "0");
+        vi.stubEnv("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", "1");
+
+        expect(isGitHubOAuthEnabled()).toBe(true);
+
+        vi.stubEnv("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", "0");
+        expect(isGitHubOAuthEnabled()).toBe(false);
     });
 });
 
@@ -96,6 +107,7 @@ describe("productionConfigErrors", () => {
         vi.stubEnv("NB_TRUSTED_PROXY_ADDRESSES", "172.30.0.1");
         vi.stubEnv("NB_PRIVATE_MODE", "1");
         vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "0");
+        vi.stubEnv("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", "0");
         vi.stubEnv("ADMIN_PASSWORD", "");
         delete process.env.ADMIN_PASSWORD;
     }
@@ -133,5 +145,14 @@ describe("productionConfigErrors", () => {
         vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "enabled");
 
         expect(productionConfigErrors()).toContain("NUXT_PUBLIC_REGISTRATION_ENABLED 必须是 0/1/false/true");
+    });
+
+    it("拒绝非法 OAuth 开关和私有模式下的矛盾配置", () => {
+        validProductionEnv();
+        vi.stubEnv("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", "enabled");
+        expect(productionConfigErrors()).toContain("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED 必须是 0/1/false/true");
+
+        vi.stubEnv("NUXT_PUBLIC_GITHUB_OAUTH_ENABLED", "1");
+        expect(productionConfigErrors()).toContain("NB_PRIVATE_MODE=1 时 NUXT_PUBLIC_GITHUB_OAUTH_ENABLED 必须关闭");
     });
 });

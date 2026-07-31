@@ -1,52 +1,63 @@
 <script setup lang="ts">
 import {nextTick, reactive, ref} from "vue";
-import type {PendingOAuthDto} from "../../../shared/dto/auth.dto";
+import type {AuthSessionDto, PendingOAuthDto} from "../../../shared/dto/auth.dto";
+import type {ApiErrorSnapshot} from "../../composables/useLocalizedApiError";
 import {OAuthRegisterRequestDtoSchema, type OAuthRegisterRequestDto} from "../../../shared/auth-schema";
 import {normalizeValidationIssues} from "../../../shared/validation-issues";
-import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 type OAuthField = keyof OAuthRegisterRequestDto;
+type PendingState = "loading" | "ready" | "missing" | "error";
 
-definePageMeta({layout: false});
+definePageMeta({layout: false, middleware: "github-oauth-enabled"});
 
-const {t} = useI18n();
+const {t, locale} = useI18n();
 useHead(() => ({title: t("auth.completeGithub")}));
 
 const api = useWorkshopApi();
-const {refresh} = useAuthState();
+const {applySession} = useAuthState();
 const notification = useNotification();
 const localizedError = useLocalizedApiError();
-const publicConfig = useRuntimeConfig().public;
 const formRef = ref<HTMLFormElement | null>(null);
 const pending = ref<PendingOAuthDto | null>(null);
-const loading = ref(true);
-const missing = ref(false);
+const pendingState = ref<PendingState>("loading");
+const pendingError = ref("");
+const pendingErrorSnapshot = ref<ApiErrorSnapshot | null>(null);
 const displayName = ref("");
 const username = ref("");
 const registrationCode = ref("");
 const inviteCode = ref("");
 const busy = ref(false);
 const errorMsg = ref("");
+const lastServerError = ref<ApiErrorSnapshot | null>(null);
 const fieldErrors = reactive<{[field in OAuthField]?: string}>({});
 const fieldOrder: OAuthField[] = ["displayName", "username", "registrationCode", "inviteCode"];
 
-onMounted(async () => {
-    if (!isRuntimeFlagEnabled(publicConfig.githubOAuthEnabled) || !isRuntimeFlagEnabled(publicConfig.registrationEnabled)) {
-        await navigateTo("/login", {replace: true});
-        return;
-    }
+/** 加载 sealed session 中待补全的 GitHub 身份，并区分缺失与暂时故障。 */
+async function loadPending(): Promise<void> {
+    pendingState.value = "loading";
+    pendingError.value = "";
+    pendingErrorSnapshot.value = null;
     try {
         pending.value = await api.getPendingOAuth();
         displayName.value = pending.value.displayName || pending.value.providerUsername;
         username.value = pending.value.suggestedUsername;
         registrationCode.value = sessionStorage.getItem("nbook-registration-code") ?? "";
         inviteCode.value = sessionStorage.getItem("nbook-invite-code") ?? "";
-    } catch {
-        missing.value = true;
-    } finally {
-        loading.value = false;
+        pendingState.value = "ready";
+    } catch (error) {
+        pending.value = null;
+        pendingErrorSnapshot.value = localizedError.snapshot(error);
+        if (pendingErrorSnapshot.value.status === 404
+            && localizedError.hasCode(pendingErrorSnapshot.value, "oauth_registration_missing")) {
+            pendingState.value = "missing";
+            return;
+        }
+        pendingState.value = "error";
+        pendingError.value = localizedError.resolve(pendingErrorSnapshot.value, "auth.pendingLoadFailed");
     }
-});
+}
+
+onMounted(loadPending);
 
 function values(): OAuthRegisterRequestDto {
     return {
@@ -78,9 +89,28 @@ async function focusFirstError(): Promise<void> {
     }
 }
 
+/** 语言切换时重绘当前加载错误和已显示的表单错误。 */
+function retranslateVisibleErrors(): void {
+    if (pendingState.value === "error" && pendingErrorSnapshot.value) {
+        pendingError.value = localizedError.resolve(pendingErrorSnapshot.value, "auth.pendingLoadFailed");
+    }
+    const visibleFields = fieldOrder.filter((field) => fieldErrors[field]);
+    const hadMessage = errorMsg.value !== "";
+    for (const field of visibleFields) validateField(field);
+    if (!lastServerError.value) return;
+    const resolved = localizedError.form(lastServerError.value, "auth.registerFailed");
+    for (const field of visibleFields) {
+        if (!fieldErrors[field] && resolved.fields[field]) fieldErrors[field] = resolved.fields[field];
+    }
+    if (hadMessage) errorMsg.value = resolved.message;
+}
+
+watch(locale, retranslateVisibleErrors);
+
 async function submit(): Promise<void> {
     busy.value = true;
     errorMsg.value = "";
+    lastServerError.value = null;
     let shouldFocusError = false;
     for (const field of fieldOrder) {
         delete fieldErrors[field];
@@ -96,14 +126,15 @@ async function submit(): Promise<void> {
             shouldFocusError = true;
             return;
         }
-        await api.completeOAuthRegister(result.data);
+        const session: AuthSessionDto = await api.completeOAuthRegister(result.data);
+        applySession(session);
         sessionStorage.removeItem("nbook-registration-code");
         sessionStorage.removeItem("nbook-invite-code");
-        await refresh();
         notification.success(t("auth.registerWelcome"));
         await navigateTo("/");
     } catch (error) {
-        const resolved = localizedError.form(error, "auth.registerFailed");
+        lastServerError.value = localizedError.snapshot(error);
+        const resolved = localizedError.form(lastServerError.value, "auth.registerFailed");
         Object.assign(fieldErrors, resolved.fields);
         errorMsg.value = resolved.message;
         shouldFocusError = true;
@@ -121,12 +152,13 @@ async function submit(): Promise<void> {
         <div class="absolute right-4 top-4"><LocaleSwitcher /></div>
         <Panel class="w-full max-w-sm space-y-4">
             <NuxtLink to="/" class="flex items-center justify-center gap-2 font-semibold"><span class="i-lucide-box h-5 w-5 text-[var(--accent-main)]"></span>NeuroBook</NuxtLink>
-            <StateBlock v-if="loading" state="loading" :message="t('common.loading')" />
-            <template v-else-if="missing">
+            <StateBlock v-if="pendingState === 'loading'" state="loading" :message="t('common.loading')" />
+            <template v-else-if="pendingState === 'missing'">
                 <StateBlock state="empty" :message="t('auth.pendingMissing')" />
                 <NuxtLink to="/login" class="block"><Button variant="secondary" block>{{ t("auth.pendingRestart") }}</Button></NuxtLink>
             </template>
-            <form v-else-if="pending" ref="formRef" class="space-y-4" @submit.prevent="submit">
+            <StateBlock v-else-if="pendingState === 'error'" state="error" :message="pendingError" :retry="loadPending" />
+            <form v-else-if="pendingState === 'ready' && pending" ref="formRef" class="space-y-4" novalidate @submit.prevent="submit">
                 <h1 class="text-center text-lg font-semibold">{{ t("auth.completeRegistration") }}</h1>
                 <div class="flex items-center gap-3 rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-3 py-2.5">
                     <UserAvatar :username="pending.providerUsername" :avatar-url="pending.avatarUrl" :size="36" />
@@ -137,8 +169,8 @@ async function submit(): Promise<void> {
                 </div>
                 <FormField :label="t('auth.displayName')" :description="t('auth.displayNameDescription')" :error="fieldErrors.displayName" required><FormInput v-model="displayName" name="displayName" autocomplete="name" :maxlength="50" @blur="validateField('displayName')" /></FormField>
                 <FormField :label="t('auth.accountName')" :description="t('auth.accountNameDescription')" :error="fieldErrors.username" required><FormInput v-model="username" name="username" autocomplete="username" :maxlength="32" autocapitalize="none" spellcheck="false" @blur="validateField('username')" /></FormField>
-                <FormField :label="t('auth.registrationCode')" :error="fieldErrors.registrationCode" required><FormInput v-model="registrationCode" name="registrationCode" autocomplete="off" :maxlength="100" @blur="validateField('registrationCode')" /></FormField>
-                <FormField :label="t('auth.inviteCode')" :error="fieldErrors.inviteCode"><FormInput v-model="inviteCode" name="inviteCode" autocomplete="off" :maxlength="100" @blur="validateField('inviteCode')" /></FormField>
+                <FormField :label="t('auth.registrationCode')" :error="fieldErrors.registrationCode" required><FormInput v-model="registrationCode" name="registrationCode" autocomplete="off" :maxlength="100" autocapitalize="none" spellcheck="false" @blur="validateField('registrationCode')" /></FormField>
+                <FormField :label="t('auth.inviteCode')" :error="fieldErrors.inviteCode"><FormInput v-model="inviteCode" name="inviteCode" autocomplete="off" :maxlength="100" autocapitalize="none" spellcheck="false" @blur="validateField('inviteCode')" /></FormField>
                 <p v-if="errorMsg" role="alert" class="text-sm text-[var(--status-danger)]">{{ errorMsg }}</p>
                 <Button type="submit" block :loading="busy">{{ t("auth.registerAction") }}</Button>
                 <NuxtLink to="/login" class="block text-center text-sm text-[var(--accent-text)] hover:underline">{{ t("auth.useAnotherLogin") }}</NuxtLink>
