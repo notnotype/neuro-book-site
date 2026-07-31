@@ -206,26 +206,48 @@ describe("API v1 主体流程", () => {
     });
 
     it("无注册码 / 无效注册码注册被拒", async () => {
-        const missing = await api("/api/auth/register", {json: {username: "author1", password: "password123"}});
+        const missing = await api("/api/auth/register", {json: {username: "author1", displayName: "作者一号", password: "password123"}});
         expect(missing.status).toBe(400);
+        const missingPayload = (await missing.json()) as {data?: {error?: string; issues?: Array<{path: string; code: string}>}};
+        expect(missingPayload.data?.error).toBe("validation_failed");
+        expect(missingPayload.data?.issues).toContainEqual({path: "registrationCode", code: "required"});
 
-        const bogus = await api("/api/auth/register", {json: {username: "author1", password: "password123", registrationCode: "nbr-bogus"}});
+        const bogus = await api("/api/auth/register", {json: {username: "author1", displayName: "作者一号", password: "password123", registrationCode: "nbr-bogus"}});
         expect(bogus.status).toBe(400);
-        expect(((await bogus.json()) as {message?: string}).message).toContain("注册码无效");
+        expect(((await bogus.json()) as {data?: {error?: string}}).data?.error).toBe("registration_code_invalid");
+
+        const sensitivePassword = "sensitive-password-123";
+        const invalidUsername = await api("/api/auth/register", {
+            json: {username: "中文账号", displayName: "中文显示名称", password: sensitivePassword, registrationCode: registrationCodes[0]},
+        });
+        expect(invalidUsername.status).toBe(400);
+        const invalidText = await invalidUsername.text();
+        const invalidPayload = JSON.parse(invalidText) as {data?: {error?: string; issues?: Array<{path: string; code: string}>}};
+        expect(invalidPayload.data?.error).toBe("validation_failed");
+        expect(invalidPayload.data?.issues).toContainEqual({path: "username", code: "invalid_format"});
+        expect(invalidText).not.toContain("中文账号");
+        expect(invalidText).not.toContain(sensitivePassword);
     });
 
     it("同一不限次数注册码可注册多个账号", async () => {
         const register = await api("/api/auth/register", {
             jar: authorJar,
-            json: {username: "author1", password: "password123", registrationCode: registrationCodes[0]},
+            json: {username: "author1", displayName: "作者一号", password: "password123", registrationCode: registrationCodes[0]},
         });
         expect(register.status).toBe(200);
+        expect(((await register.json()) as {user?: {displayName?: string}}).user?.displayName).toBe("作者一号");
 
         const reader = await api("/api/auth/register", {
             jar: readerJar,
-            json: {username: "reader1", password: "password123", registrationCode: registrationCodes[0]},
+            json: {username: "reader1", displayName: "读者一号", password: "password123", registrationCode: registrationCodes[0]},
         });
         expect(reader.status).toBe(200);
+
+        const duplicated = await api("/api/auth/register", {
+            json: {username: "author1", displayName: "另一个显示名称", password: "password123", registrationCode: registrationCodes[0]},
+        });
+        expect(duplicated.status).toBe(409);
+        expect((await duplicated.json()) as object).toMatchObject({data: {error: "username_taken", field: "username"}});
 
         const listed = await api("/api/v1/admin/registration-codes", {jar: adminJar});
         const page = (await listed.json()) as PageDto<RegistrationCodeDto>;
@@ -303,14 +325,14 @@ describe("API v1 主体流程", () => {
     it("上传拒绝用例：缺 package.json / version 不递增 / name 变更 / type 不一致 / 非作者", async () => {
         const noManifest = await api(`/api/v1/items/${skillSlug}/versions`, {jar: authorJar, form: uploadForm(buildPackageZip(null, skillEntries))});
         expect(noManifest.status).toBe(400);
-        expect(((await noManifest.json()) as {message?: string}).message).toContain("缺少 package.json");
+        expect(((await noManifest.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_package");
 
         const sameVersion = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
             form: uploadForm(buildPackageZip(agentPackage("skill", "stop-slop", "1.0.0"), skillEntries)),
         });
         expect(sameVersion.status).toBe(400);
-        expect(((await sameVersion.json()) as {message?: string}).message).toContain("严格大于当前最新版本 1.0.0");
+        expect(((await sameVersion.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_version");
 
         const renamed = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
@@ -320,14 +342,14 @@ describe("API v1 主体流程", () => {
             })),
         });
         expect(renamed.status).toBe(400);
-        expect(((await renamed.json()) as {message?: string}).message).toContain("安装名必须保持为 stop-slop");
+        expect(((await renamed.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_package");
 
         const wrongType = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: authorJar,
             form: uploadForm(buildPackageZip(agentPackage("profile", "stop-slop", "2.0.0"), {"stop-slop.profile.tsx": strToU8("export default {};")})),
         });
         expect(wrongType.status).toBe(400);
-        expect(((await wrongType.json()) as {message?: string}).message).toContain("包类型必须保持为 skill");
+        expect(((await wrongType.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_package");
 
         const notOwner = await api(`/api/v1/items/${skillSlug}/versions`, {
             jar: readerJar,
@@ -352,7 +374,7 @@ describe("API v1 主体流程", () => {
             form: uploadForm(buildPackageZip(agentPackage("profile", "mini-writer", "1.0.0"), {"mini-writer.home/notes.md": profileEntries["mini-writer.home/notes.md"] ?? new Uint8Array()})),
         });
         expect(missingEntry.status).toBe(400);
-        expect(((await missingEntry.json()) as {message?: string}).message).toContain("mini-writer.profile.tsx");
+        expect(((await missingEntry.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_package");
 
         profileZipV1 = buildPackageZip(agentPackage("profile", "mini-writer", "1.0.0", "0.5.6"), profileEntries);
         const uploadedProfile = await api(`/api/v1/items/${profileSlug}/versions`, {jar: authorJar, form: uploadForm(profileZipV1)});
@@ -553,7 +575,7 @@ describe("API v1 主体流程", () => {
         // 作者不能编辑，也不能借 PATCH 恢复
         const authorAttempt = await api(`/api/v1/items/${skillSlug}`, {method: "PATCH", jar: authorJar, json: {status: "published"}});
         expect(authorAttempt.status).toBe(403);
-        expect(((await authorAttempt.json()) as {message?: string}).message).toContain("管理员下架");
+        expect(((await authorAttempt.json()) as {data?: {error?: string}}).data?.error).toBe("item_removed");
 
         // 作者也不能给 removed 条目传新版本
         const uploadAttempt = await api(`/api/v1/items/${skillSlug}/versions`, {
@@ -579,16 +601,16 @@ describe("API v1 主体流程", () => {
         const [code] = ((await issued.json()) as RegistrationCodeDto[]).map((item) => item.code);
 
         const [a, b] = await Promise.all([
-            api("/api/auth/register", {json: {username: "race-user-a", password: "password123", registrationCode: code}}),
-            api("/api/auth/register", {json: {username: "race-user-b", password: "password123", registrationCode: code}}),
+            api("/api/auth/register", {json: {username: "race-user-a", displayName: "Race user A", password: "password123", registrationCode: code}}),
+            api("/api/auth/register", {json: {username: "race-user-b", displayName: "Race user B", password: "password123", registrationCode: code}}),
         ]);
         const statuses = [a.status, b.status].sort();
         expect(statuses[0]).toBe(200);
         expect(statuses[1]).toBe(400);
 
-        const third = await api("/api/auth/register", {json: {username: "race-user-c", password: "password123", registrationCode: code}});
+        const third = await api("/api/auth/register", {json: {username: "race-user-c", displayName: "Race user C", password: "password123", registrationCode: code}});
         expect(third.status).toBe(400);
-        expect(((await third.json()) as {message?: string}).message).toContain("使用次数已达上限");
+        expect(((await third.json()) as {data?: {error?: string}}).data?.error).toBe("registration_code_exhausted");
     });
 
     it("并发上传同版本：恰好一个成功，下载字节与成功记录一致", async () => {
@@ -701,14 +723,14 @@ describe("API v1 主体流程", () => {
             form: uploadForm(buildPackageZip({...packageJson, version: "1.1.0"}, {"workflow.ts": strToU8('import x from "x";')})),
         });
         expect(imported.status).toBe(400);
-        expect(((await imported.json()) as {message?: string}).message).toContain("不允许使用 import");
+        expect(((await imported.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_package");
 
         const dependencies = await api(`/api/v1/items/${workflowSlug}/versions`, {
             jar: authorJar,
             form: uploadForm(buildPackageZip({...packageJson, version: "1.1.0", dependencies: {x: "1.0.0"}}, {"workflow.ts": strToU8("export default {};")})),
         });
         expect(dependencies.status).toBe(400);
-        expect(((await dependencies.json()) as {message?: string}).message).toContain("workflow 不能声明 dependencies");
+        expect(((await dependencies.json()) as {data?: {error?: string}}).data?.error).toBe("invalid_agent_asset_package");
 
         const buildVersion = "1.1.0+build.1";
         const buildUploaded = await api(`/api/v1/items/${workflowSlug}/versions`, {

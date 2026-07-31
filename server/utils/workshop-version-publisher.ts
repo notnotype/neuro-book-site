@@ -1,11 +1,11 @@
 import type {AgentAssetPackageJson} from "../../shared/agent-asset-package";
 import {packageRunsCode} from "../../shared/agent-asset-package";
-import {createError} from "h3";
 import type {ItemVersion, WorkshopItem} from "../database/prisma";
 import {Prisma, prisma} from "../database/prisma";
 import type {UpdateItemRequest} from "./workshop-dto";
 import {commitVersionZip, removeVersionZip, versionZipExists} from "./workshop-files";
 import {siteLogger} from "./site-logger";
+import {apiError} from "./api-error";
 
 export type VersionPublishInput = {
     item: WorkshopItem;
@@ -32,9 +32,9 @@ export async function publishWorkshopVersion(input: VersionPublishInput): Promis
     const archiveExists = await versionZipExists(input.item.id, input.ordinal);
     if (existing) {
         if (!archiveExists) {
-            throw createError({statusCode: 500, message: "版本数据库记录对应的归档缺失，已停止发布"});
+            throw apiError(500, "archive_missing", "Version archive is missing");
         }
-        throw createError({statusCode: 409, message: "发布序号已存在，请刷新后重试"});
+        throw apiError(409, "version_conflict", "Version ordinal already exists");
     }
     if (archiveExists) {
         await removeVersionZip(input.item.id, input.ordinal);
@@ -85,7 +85,7 @@ export async function publishWorkshopVersion(input: VersionPublishInput): Promis
             }, "failed to remove archive after database rollback");
         }
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-            throw createError({statusCode: 409, message: `version ${input.packageJson.version} 或发布序号已存在，请刷新后重试`});
+            throw apiError(409, "version_conflict", "Version or ordinal already exists");
         }
         throw error;
     }

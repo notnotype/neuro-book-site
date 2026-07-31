@@ -6,6 +6,7 @@ import type {User} from "../../../database/prisma";
 import {Prisma, prisma} from "../../../database/prisma";
 import {clientIp, isGitHubOAuthEnabled} from "../../../utils/site-config";
 import {consumeAccessCodes} from "../../../utils/access-code";
+import {apiError} from "../../../utils/api-error";
 
 /**
  * GitHub 补全注册（spec §5.2）：身份取自 session pendingOAuth，body 补用户名、注册码与可选邀请码。
@@ -14,16 +15,16 @@ import {consumeAccessCodes} from "../../../utils/access-code";
  */
 export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
     if (!isGitHubOAuthEnabled()) {
-        throw createError({statusCode: 404, message: "Not Found"});
+        throw apiError(404, "not_found", "Not Found");
     }
     const ip = clientIp(event);
     if (!consumeRateLimit(`register:${ip}`, envRateLimit("NB_REGISTER_RATE_LIMIT", 5), 60 * 60 * 1000)) {
-        throw createError({statusCode: 429, message: "注册尝试过于频繁，请一小时后再试"});
+        throw apiError(429, "rate_limit_exceeded", "Registration rate limit exceeded");
     }
 
     const pending = await getPendingOAuthSession(event);
     if (!pending) {
-        throw createError({statusCode: 400, message: "没有待完成的 GitHub 注册，请从登录页重新发起"});
+        throw apiError(400, "oauth_registration_missing", "No pending GitHub registration");
     }
     const body = await validateBody(event, OAuthRegisterRequestDtoSchema);
 
@@ -32,14 +33,14 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
         select: {id: true},
     });
     if (existingUser) {
-        throw createError({statusCode: 409, message: "用户名已存在"});
+        throw apiError(409, "username_taken", "Username already exists", {field: "username"});
     }
     const existingIdentity = await prisma.passportIdentity.findUnique({
         where: {provider_providerUserId: {provider: pending.provider, providerUserId: pending.providerUserId}},
         select: {id: true},
     });
     if (existingIdentity) {
-        throw createError({statusCode: 409, message: "该 GitHub 账号已绑定其他用户，请直接用 GitHub 登录"});
+        throw apiError(409, "oauth_identity_taken", "GitHub identity already belongs to another account");
     }
 
     let user: User;
@@ -49,7 +50,7 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
             const created = await tx.user.create({
                 data: {
                     username: body.username,
-                    displayName: pending.displayName || body.username,
+                    displayName: body.displayName,
                     passwordHash: null,
                     avatarUrl: pending.avatarUrl,
                     registrationCodeId: codeIds.registrationCodeId,
@@ -69,7 +70,7 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
     } catch (error) {
         // 并发穿过预检查时撞唯一约束：username 或 (provider, providerUserId)
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-            throw createError({statusCode: 409, message: "用户名或 GitHub 账号已被占用"});
+            throw apiError(409, "registration_identity_conflict", "Username or GitHub identity is already in use");
         }
         throw error;
     }

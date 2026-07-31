@@ -3,6 +3,7 @@ import {resolveGitHubSignIn} from "../../utils/github-oauth";
 import {getCurrentUser, setAuthSession, setPendingOAuthSession, toAuthUser} from "../../utils/auth";
 import {Prisma, prisma} from "../../database/prisma";
 import {isGitHubOAuthEnabled} from "../../utils/site-config";
+import {apiError} from "../../utils/api-error";
 
 /**
  * GitHub OAuth 回调（spec §5.2 行为矩阵）：
@@ -86,7 +87,7 @@ const githubOAuthHandler = isGitHubOAuthEnabled() ? defineOAuthGitHubEventHandle
         return sendRedirect(event, "/login?error=oauth");
     },
 }) : defineEventHandler(() => {
-    throw createError({statusCode: 404, message: "Not Found"});
+    throw apiError(404, "not_found", "Not Found");
 });
 
 export default githubOAuthHandler;

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {DropdownItem, SegmentedControlOption, SegmentedControlValue} from "@notnotype/nb-ui/components";
 import type {WorkshopItemDto, WorkshopItemType} from "../../shared/dto/workshop.dto";
 
@@ -7,8 +6,11 @@ import type {WorkshopItemDto, WorkshopItemType} from "../../shared/dto/workshop.
 const route = useRoute();
 const api = useWorkshopApi();
 const notification = useNotification();
+const localizedError = useLocalizedApiError();
+const {t} = useI18n();
+const {formatNumber} = useLocaleFormat();
 
-useHead({title: "浏览"});
+useHead(() => ({title: t("browse.title")}));
 
 const PAGE_SIZE = 24;
 
@@ -68,19 +70,19 @@ async function loadSections(): Promise<void> {
     }
 }
 
-const typeOptions: SegmentedControlOption[] = [
-    {label: "全部", value: ""},
+const typeOptions = computed<SegmentedControlOption[]>(() => [
+    {label: t("browse.all"), value: ""},
     {label: "Skill", value: "skill"},
     {label: "Workflow", value: "workflow"},
     {label: "Profile", value: "profile"},
-];
+]);
 
 const sortItems = computed<DropdownItem[]>(() => [
-    {label: "最新", value: "latest", active: filters.value.sort === "latest"},
-    {label: "下载最多", value: "downloads", active: filters.value.sort === "downloads"},
-    {label: "点赞最多", value: "likes", active: filters.value.sort === "likes"},
+    {label: t("browse.latest"), value: "latest", active: filters.value.sort === "latest"},
+    {label: t("browse.mostDownloaded"), value: "downloads", active: filters.value.sort === "downloads"},
+    {label: t("browse.mostLiked"), value: "likes", active: filters.value.sort === "likes"},
 ]);
-const sortLabel = computed(() => sortItems.value.find((option) => option.active)?.label ?? "最新");
+const sortLabel = computed(() => sortItems.value.find((option) => option.active)?.label ?? t("browse.latest"));
 
 // 合并局部改动后重写 URL query（省略默认值，保持地址干净）
 function applyFilters(patch: Partial<{q: string; type?: WorkshopItemType; sort: string; tags: string[]}>): void {
@@ -132,9 +134,9 @@ async function load(reset: boolean): Promise<void> {
         }
         // 初次加载失败落整页错误态；加载更多失败只弹通知，保留已加载内容
         if (reset) {
-            errorMsg.value = resolveApiErrorMessage(error, "加载失败");
+            errorMsg.value = localizedError.resolve(error, "common.loadFailed");
         } else {
-            notification.error(resolveApiErrorMessage(error, "加载更多失败"));
+            notification.error(localizedError.resolve(error, "common.loadMoreFailed"));
         }
     } finally {
         // 过期请求不碰 loading 态，避免提前熄灭新请求的加载指示
@@ -159,37 +161,37 @@ watch(() => route.query, () => {
     <section class="flex flex-col gap-5">
         <!-- 过滤条 -->
         <Panel padding="sm" class="flex flex-wrap items-center gap-3">
-            <SegmentedControl :model-value="filters.type ?? ''" :options="typeOptions" aria-label="按类型过滤" @update:model-value="onType" />
+            <SegmentedControl :model-value="filters.type ?? ''" :options="typeOptions" :aria-label="t('browse.typeFilter')" @update:model-value="onType" />
             <Dropdown :items="sortItems" root-class="relative" menu-class="left-0 top-full mt-2 min-w-36" @select="(value) => applyFilters({sort: value})">
                 <button type="button" class="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-3 text-xs text-[var(--text-main)] transition-colors hover:bg-[var(--bg-hover)]">
-                    <span class="i-lucide-arrow-down-wide-narrow h-3.5 w-3.5 text-[var(--text-muted)]"></span>排序：{{ sortLabel }}<span class="i-lucide-chevron-down h-3.5 w-3.5"></span>
+                    <span class="i-lucide-arrow-down-wide-narrow h-3.5 w-3.5 text-[var(--text-muted)]"></span>{{ t("browse.sort", {value: sortLabel}) }}<span class="i-lucide-chevron-down h-3.5 w-3.5"></span>
                 </button>
             </Dropdown>
             <form class="ml-auto flex min-w-56 flex-1 items-center sm:max-w-xs" @submit.prevent="applyFilters({q: searchInput.trim()})">
                 <div class="relative w-full">
                     <span class="i-lucide-search pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"></span>
-                    <input v-model="searchInput" type="search" placeholder="搜索标题 / 摘要 / 安装名…" class="h-8 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-xs text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)] focus:shadow-[0_0_0_3px_var(--accent-bg)]" />
+                    <input v-model="searchInput" type="search" :placeholder="t('browse.searchPlaceholder')" class="h-8 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-xs text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)] focus:shadow-[0_0_0_3px_var(--accent-bg)]" />
                 </div>
             </form>
         </Panel>
 
         <!-- 当前标签过滤提示 -->
         <div v-if="filters.tags.length > 0" class="flex flex-wrap items-center gap-2 text-sm text-[var(--text-secondary)]">
-            <span>标签过滤：</span>
+            <span>{{ t("browse.tagFilter") }}</span>
             <TagChips :tags="filters.tags" />
-            <button type="button" class="text-xs text-[var(--accent-text)] hover:underline" @click="applyFilters({tags: []})">清除</button>
+            <button type="button" class="text-xs text-[var(--accent-text)] hover:underline" @click="applyFilters({tags: []})">{{ t("browse.clear") }}</button>
         </div>
 
         <!-- 默认态分区：编辑推荐 / 热门下载（有筛选时隐藏，退回纯列表） -->
         <template v-if="isDefaultView">
             <section v-if="featuredItems.length > 0">
-                <h2 class="mb-3 flex items-center gap-2 text-base font-semibold text-[var(--text-main)]"><span class="i-lucide-star h-4 w-4 text-[var(--accent-main)]"></span>编辑推荐</h2>
+                <h2 class="mb-3 flex items-center gap-2 text-base font-semibold text-[var(--text-main)]"><span class="i-lucide-star h-4 w-4 text-[var(--accent-main)]"></span>{{ t("browse.featured") }}</h2>
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <ItemCard v-for="entry in featuredItems" :key="entry.id" :item="entry" />
                 </div>
             </section>
             <section v-if="hotItems.length > 0">
-                <h2 class="mb-3 flex items-center gap-2 text-base font-semibold text-[var(--text-main)]"><span class="i-lucide-flame h-4 w-4 text-[var(--status-warning)]"></span>热门下载</h2>
+                <h2 class="mb-3 flex items-center gap-2 text-base font-semibold text-[var(--text-main)]"><span class="i-lucide-flame h-4 w-4 text-[var(--status-warning)]"></span>{{ t("browse.popular") }}</h2>
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <ItemCard v-for="entry in hotItems" :key="entry.id" :item="entry" />
                 </div>
@@ -199,16 +201,16 @@ watch(() => route.query, () => {
         <!-- 三态：加载 / 错误 / 空 / 网格 -->
         <StateBlock v-if="loading && items.length === 0" state="loading" />
         <StateBlock v-else-if="errorMsg && items.length === 0" state="error" :message="errorMsg" :retry="() => load(true)" />
-        <StateBlock v-else-if="items.length === 0" state="empty" message="没有符合条件的条目" />
+        <StateBlock v-else-if="items.length === 0" state="empty" :message="t('browse.empty')" />
         <template v-else>
-            <h2 v-if="isDefaultView" class="flex items-center gap-2 text-base font-semibold text-[var(--text-main)]"><span class="i-lucide-clock h-4 w-4 text-[var(--text-muted)]"></span>最新发布</h2>
+            <h2 v-if="isDefaultView" class="flex items-center gap-2 text-base font-semibold text-[var(--text-main)]"><span class="i-lucide-clock h-4 w-4 text-[var(--text-muted)]"></span>{{ t("browse.latestPublished") }}</h2>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <ItemCard v-for="item in items" :key="item.id" :item="item" />
             </div>
             <!-- 加载更多 / 计数 -->
             <div class="flex flex-col items-center gap-2 pt-2">
-                <Button v-if="nextOffset !== null" variant="secondary" :loading="loadingMore" @click="load(false)">加载更多</Button>
-                <p class="text-xs text-[var(--text-muted)]">共 {{ total }} 条{{ nextOffset === null ? "，已全部加载" : "" }}</p>
+                <Button v-if="nextOffset !== null" variant="secondary" :loading="loadingMore" @click="load(false)">{{ t("common.loadMore") }}</Button>
+                <p class="text-xs text-[var(--text-muted)]">{{ t("browse.total", {count: formatNumber(total)}) }}{{ nextOffset === null ? t("browse.allLoaded") : "" }}</p>
             </div>
         </template>
     </section>

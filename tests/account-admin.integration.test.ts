@@ -204,7 +204,7 @@ describe("账号第二轮：OAuth 注册面与身份管理", () => {
         registrationCode = ((await issued.json()) as RegistrationCodeDto[])[0]!.code;
 
         for (const [index, jar] of [u1Jar, u2Jar, u3Jar].entries()) {
-            const register = await api("/api/auth/register", {jar, json: {username: `au${index + 1}`, password: "password123", registrationCode}});
+            const register = await api("/api/auth/register", {jar, json: {username: `au${index + 1}`, displayName: `用户 ${index + 1}`, password: "password123", registrationCode}});
             expect(register.status).toBe(200);
         }
     });
@@ -225,20 +225,20 @@ describe("账号第二轮：OAuth 注册面与身份管理", () => {
         const shared = page.items.find((code) => code.code === registrationCode)!;
         const belowUsedCount = await api(`/api/v1/admin/registration-codes/${shared.id}`, {method: "PATCH", jar: adminJar, json: {maxUses: 2}});
         expect(belowUsedCount.status).toBe(400);
-        expect(((await belowUsedCount.json()) as {message?: string}).message).toContain("使用上限不能小于已使用次数");
+        expect(((await belowUsedCount.json()) as {data?: {error?: string}}).data?.error).toBe("max_uses_below_used");
 
         const disabled = await api(`/api/v1/admin/registration-codes/${created.id}`, {method: "PATCH", jar: adminJar, json: {disabled: true}});
         expect(disabled.status).toBe(200);
-        const deniedDisabled = await api("/api/auth/register", {json: {username: "disabled-code-user", password: "password123", registrationCode: created.code}});
+        const deniedDisabled = await api("/api/auth/register", {json: {username: "disabled-code-user", displayName: "Disabled code user", password: "password123", registrationCode: created.code}});
         expect(deniedDisabled.status).toBe(400);
-        expect(((await deniedDisabled.json()) as {message?: string}).message).toContain("注册码已停用");
+        expect(((await deniedDisabled.json()) as {data?: {error?: string}}).data?.error).toBe("registration_code_disabled");
 
         await api(`/api/v1/admin/registration-codes/${created.id}`, {method: "PATCH", jar: adminJar, json: {disabled: false}});
         const past = dateIsNumber ? Date.now() - 1000 : new Date(Date.now() - 1000).toISOString();
         await db!.execute({sql: "UPDATE RegistrationCode SET expiresAt = ? WHERE id = ?", args: [past, created.id]});
-        const deniedExpired = await api("/api/auth/register", {json: {username: "expired-code-user", password: "password123", registrationCode: created.code}});
+        const deniedExpired = await api("/api/auth/register", {json: {username: "expired-code-user", displayName: "Expired code user", password: "password123", registrationCode: created.code}});
         expect(deniedExpired.status).toBe(400);
-        expect(((await deniedExpired.json()) as {message?: string}).message).toContain("注册码已过期");
+        expect(((await deniedExpired.json()) as {data?: {error?: string}}).data?.error).toBe("registration_code_expired");
 
         // 非 admin 不可见
         const forbidden = await api("/api/v1/admin/registration-codes", {jar: u1Jar});
@@ -253,23 +253,27 @@ describe("账号第二轮：OAuth 注册面与身份管理", () => {
         const foreign = await api(`/api/v1/me/invite-codes/${invite.id}`, {method: "PATCH", jar: u2Jar, json: {disabled: true}});
         expect(foreign.status).toBe(404);
 
-        const invited = await api("/api/auth/register", {json: {username: "invited-user", password: "password123", registrationCode, inviteCode: invite.code}});
+        const invited = await api("/api/auth/register", {json: {username: "invited-user", displayName: "受邀用户", password: "password123", registrationCode, inviteCode: invite.code}});
         expect(invited.status).toBe(200);
         const mine = (await (await api("/api/v1/me/invite-codes", {jar: u1Jar})).json()) as InviteCodeDto[];
         expect(mine[0]?.usedCount).toBe(1);
 
         const disabled = await api(`/api/v1/me/invite-codes/${invite.id}`, {method: "PATCH", jar: u1Jar, json: {disabled: true}});
         expect(disabled.status).toBe(200);
-        const denied = await api("/api/auth/register", {json: {username: "invite-disabled-user", password: "password123", registrationCode, inviteCode: invite.code}});
+        const beforeDenied = await db!.execute({sql: "SELECT usedCount FROM RegistrationCode WHERE code = ?", args: [registrationCode]});
+        const denied = await api("/api/auth/register", {json: {username: "invite-disabled-user", displayName: "Invite disabled user", password: "password123", registrationCode, inviteCode: invite.code}});
         expect(denied.status).toBe(400);
-        expect(((await denied.json()) as {message?: string}).message).toContain("邀请码已停用");
+        expect(((await denied.json()) as {data?: {error?: string}}).data?.error).toBe("invite_code_disabled");
+        const afterDenied = await db!.execute({sql: "SELECT usedCount FROM RegistrationCode WHERE code = ?", args: [registrationCode]});
+        expect(afterDenied.rows[0]?.usedCount).toBe(beforeDenied.rows[0]?.usedCount);
+        expect((await db!.execute({sql: "SELECT id FROM User WHERE username = ?", args: ["invite-disabled-user"]})).rows).toHaveLength(0);
     });
 
     it("OAuth 补全注册守卫：无 pending 身份时 GET 404 / POST 400", async () => {
         const read = await api("/api/auth/register/oauth");
         expect(read.status).toBe(404);
 
-        const complete = await api("/api/auth/register/oauth", {json: {username: "ghosty", registrationCode: "nbr-whatever"}});
+        const complete = await api("/api/auth/register/oauth", {json: {username: "ghosty", displayName: "Ghosty", registrationCode: "nbr-whatever"}});
         expect(complete.status).toBe(400);
     });
 

@@ -9,6 +9,7 @@ import {parseWorkshopUpload} from "../../../../utils/workshop-upload";
 import {publishWorkshopVersion} from "../../../../utils/workshop-version-publisher";
 import {consumeRateLimit, envRateLimit} from "../../../../utils/rate-limit";
 import {useStorageCapacityService} from "../../../../utils/storage-capacity";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * 上传新版本 zip（multipart：file = zip 文件，changelog = 可选文本字段）。
@@ -22,14 +23,10 @@ export default defineEventHandler(async (event): Promise<ItemVersionDto> => {
     const access = await requireAccess(event, "workshop:publish");
     const {item} = await requireOwnedItem(event, slug, access.user);
     if (item.status === "removed") {
-        throw createError({statusCode: 403, message: "条目已被管理员下架，无法上传新版本"});
+        throw apiError(403, "item_removed", "Removed item cannot receive new versions");
     }
     if (!consumeRateLimit(`workshop-upload:${access.user.id}`, envRateLimit("NB_WORKSHOP_UPLOAD_RATE_LIMIT", 20), 60 * 60 * 1000)) {
-        throw createError({
-            statusCode: 429,
-            message: "Workshop 上传过于频繁，请稍后再试",
-            data: {error: "rate_limit_exceeded"},
-        });
+        throw apiError(429, "rate_limit_exceeded", "Workshop upload rate limit exceeded");
     }
 
     const capacity = useStorageCapacityService();

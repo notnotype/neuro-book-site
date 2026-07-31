@@ -242,9 +242,9 @@ describe("Passport 设备授权流", () => {
         const issued = await api("/api/v1/admin/registration-codes", {jar: adminJar, json: {count: 1, maxUses: null, expiresAt: null}});
         const codes = ((await issued.json()) as RegistrationCodeDto[]).map((code) => code.code);
 
-        const register1 = await api("/api/auth/register", {jar: userJar, json: {username: "author1", password: "password123", registrationCode: codes[0]}});
+        const register1 = await api("/api/auth/register", {jar: userJar, json: {username: "author1", displayName: "作者一号", password: "password123", registrationCode: codes[0]}});
         expect(register1.status).toBe(200);
-        const register2 = await api("/api/auth/register", {jar: otherJar, json: {username: "other1", password: "password123", registrationCode: codes[0]}});
+        const register2 = await api("/api/auth/register", {jar: otherJar, json: {username: "other1", displayName: "其他用户", password: "password123", registrationCode: codes[0]}});
         expect(register2.status).toBe(200);
     });
 

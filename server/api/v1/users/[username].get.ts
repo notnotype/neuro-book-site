@@ -1,6 +1,7 @@
 import type {PublicUserDto} from "../../../../shared/dto/workshop.dto";
 import {prisma} from "../../../database/prisma";
 import {itemDtoInclude, toItemDto} from "../../../utils/workshop";
+import {apiError} from "../../../utils/api-error";
 
 /**
  * 作者公开页：资料 + 其全部 published 条目（unlisted / removed 不出现）。
@@ -8,12 +9,12 @@ import {itemDtoInclude, toItemDto} from "../../../utils/workshop";
 export default defineEventHandler(async (event): Promise<PublicUserDto> => {
     const username = getRouterParam(event, "username");
     if (!username) {
-        throw createError({statusCode: 400, message: "缺少 username 参数"});
+        throw apiError(400, "validation_failed", "Missing username parameter");
     }
 
     const user = await prisma.user.findUnique({where: {username}});
     if (!user || user.status !== "active") {
-        throw createError({statusCode: 404, message: "用户不存在"});
+        throw apiError(404, "user_not_found", "User not found");
     }
 
     const items = await prisma.workshopItem.findMany({

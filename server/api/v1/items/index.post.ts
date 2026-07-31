@@ -4,6 +4,7 @@ import {Prisma, prisma} from "../../../database/prisma";
 import {itemDtoInclude, toItemDto} from "../../../utils/workshop";
 import {CreateItemRequestSchema} from "../../../utils/workshop-dto";
 import {validateBody} from "../../../utils/dto";
+import {apiError} from "../../../utils/api-error";
 
 /**
  * 创建条目（仅元数据）：安装名 name 此时为空，待首版上传时从 manifest 落库。
@@ -16,7 +17,7 @@ export default defineEventHandler(async (event): Promise<WorkshopItemDto> => {
     // 预检查只为常见路径友好报错；并发抢注由 slug 唯一约束兜底
     const existing = await prisma.workshopItem.findUnique({where: {slug: body.slug}, select: {id: true}});
     if (existing) {
-        throw createError({statusCode: 409, message: "slug 已被占用"});
+        throw apiError(409, "slug_taken", "Slug already exists", {field: "slug"});
     }
 
     try {
@@ -37,7 +38,7 @@ export default defineEventHandler(async (event): Promise<WorkshopItemDto> => {
         return toItemDto(item);
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-            throw createError({statusCode: 409, message: "slug 已被占用"});
+            throw apiError(409, "slug_taken", "Slug already exists", {field: "slug"});
         }
         throw error;
     }

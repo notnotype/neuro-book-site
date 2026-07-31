@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue";
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {RegistrationCodeDto} from "../../../shared/dto/access-code.dto";
 
 const api = useWorkshopApi();
 const notification = useNotification();
+const localizedError = useLocalizedApiError();
+const {t} = useI18n();
+const {formatDate, formatNumber} = useLocaleFormat();
 
 const count = ref<number | null>(1);
 const note = ref("");
@@ -60,15 +62,15 @@ function codeStatus(code: RegistrationCodeDto): "active" | "disabled" | "expired
 }
 
 function statusText(code: RegistrationCodeDto): string {
-    return {active: "可用", disabled: "已停用", expired: "已过期", exhausted: "已用完"}[codeStatus(code)];
+    return t(`accessCode.${codeStatus(code)}`);
 }
 
 async function copyText(text: string): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);
-        notification.success("已复制");
+        notification.success(t("common.copySucceeded"));
     } catch {
-        notification.error("复制失败，请手动选择");
+        notification.error(t("common.copyFailed"));
     }
 }
 
@@ -88,10 +90,10 @@ async function issueCodes(): Promise<void> {
             expiresAt: expirationIso(expiresAt.value),
         });
         issuedCodes.value = [...created, ...issuedCodes.value];
-        notification.success(`已签发 ${created.length} 个注册码`);
+        notification.success(t("accessCode.issuedCount", {count: formatNumber(created.length)}));
         await loadList(true);
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "签发失败"));
+        notification.error(localizedError.resolve(error, "common.createFailed"));
     } finally {
         issuing.value = false;
     }
@@ -112,9 +114,9 @@ async function loadList(reset: boolean): Promise<void> {
         next.value = page.hasMore ? page.nextOffset ?? null : null;
     } catch (error) {
         if (reset) {
-            listError.value = resolveApiErrorMessage(error, "加载失败");
+            listError.value = localizedError.resolve(error, "common.loadFailed");
         } else {
-            notification.error(resolveApiErrorMessage(error, "加载更多失败"));
+            notification.error(localizedError.resolve(error, "common.loadMoreFailed"));
         }
     } finally {
         listLoading.value = false;
@@ -145,9 +147,9 @@ async function saveEdit(): Promise<void> {
         });
         list.value = list.value.map((code) => code.id === updated.id ? updated : code);
         editing.value = null;
-        notification.success("注册码设置已保存");
+        notification.success(t("accessCode.registrationSaved"));
     } catch (error) {
-        editError.value = resolveApiErrorMessage(error, "保存失败");
+        editError.value = localizedError.resolve(error, "common.saveFailed");
     } finally {
         editBusy.value = false;
     }
@@ -157,9 +159,9 @@ async function toggleDisabled(code: RegistrationCodeDto): Promise<void> {
     try {
         const updated = await api.updateRegistrationCode(code.id, {disabled: !code.disabledAt});
         list.value = list.value.map((item) => item.id === updated.id ? updated : item);
-        notification.success(updated.disabledAt ? "注册码已停用" : "注册码已启用");
+        notification.success(updated.disabledAt ? t("accessCode.registrationDisabled") : t("accessCode.registrationEnabled"));
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "操作失败"));
+        notification.error(localizedError.resolve(error, "common.actionFailed"));
     }
 }
 
@@ -170,57 +172,57 @@ onMounted(() => loadList(true));
     <div class="flex flex-col gap-4">
         <!-- 注册码签发表单 -->
         <Panel class="flex flex-col gap-3">
-            <h2 class="text-sm font-medium text-[var(--text-main)]">签发注册码</h2>
+            <h2 class="text-sm font-medium text-[var(--text-main)]">{{ t("accessCode.issueRegistration") }}</h2>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <FormField label="数量"><FormNumberInput v-model="count" :min="1" :max="100" /></FormField>
-                <FormField label="使用次数">
-                    <select v-model="limitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">不限次数</option><option value="limited">限制次数</option></select>
+                <FormField :label="t('accessCode.count')"><FormNumberInput v-model="count" :min="1" :max="100" /></FormField>
+                <FormField :label="t('accessCode.useLimit')">
+                    <select v-model="limitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">{{ t("accessCode.unlimitedUses") }}</option><option value="limited">{{ t("accessCode.limitedUses") }}</option></select>
                 </FormField>
-                <FormField v-if="limitMode === 'limited'" label="最多使用"><FormNumberInput v-model="maxUses" :min="1" :max="100000" /></FormField>
-                <FormField label="过期时间"><FormInput v-model="expiresAt" type="datetime-local" /></FormField>
-                <FormField label="备注"><FormInput v-model="note" :maxlength="120" /></FormField>
+                <FormField v-if="limitMode === 'limited'" :label="t('accessCode.maxUses')"><FormNumberInput v-model="maxUses" :min="1" :max="100000" /></FormField>
+                <FormField :label="t('accessCode.expiresAt')"><FormInput v-model="expiresAt" type="datetime-local" /></FormField>
+                <FormField :label="t('accessCode.note')"><FormInput v-model="note" :maxlength="120" /></FormField>
             </div>
-            <Button class="self-start" :loading="issuing" @click="issueCodes"><span class="i-lucide-ticket h-4 w-4"></span>签发</Button>
+            <Button class="self-start" :loading="issuing" @click="issueCodes"><span class="i-lucide-ticket h-4 w-4"></span>{{ t("accessCode.issue") }}</Button>
         </Panel>
 
         <!-- 本次签发 -->
         <Panel v-if="issuedCodes.length > 0" class="flex flex-col gap-2">
-            <h2 class="text-sm font-medium text-[var(--text-main)]">本次签发</h2>
+            <h2 class="text-sm font-medium text-[var(--text-main)]">{{ t("accessCode.issuedNow") }}</h2>
             <ul class="flex flex-col gap-2">
                 <li v-for="code in issuedCodes" :key="code.id" class="flex items-center justify-between gap-2 rounded-md border border-[var(--border-color)] bg-[var(--bg-subtle)] px-3 py-1.5">
                     <span class="truncate font-mono text-sm text-[var(--text-main)]">{{ code.code }}</span>
-                    <span class="flex gap-1"><IconButton title="复制注册码" @click="copyText(code.code)"><span class="i-lucide-copy h-4 w-4"></span></IconButton><IconButton title="复制注册链接" variant="accent" @click="copyRegistrationLink(code.code)"><span class="i-lucide-link h-4 w-4"></span></IconButton></span>
+                    <span class="flex gap-1"><IconButton :title="t('accessCode.copyRegistration')" @click="copyText(code.code)"><span class="i-lucide-copy h-4 w-4"></span></IconButton><IconButton :title="t('accessCode.copyRegistrationLink')" variant="accent" @click="copyRegistrationLink(code.code)"><span class="i-lucide-link h-4 w-4"></span></IconButton></span>
                 </li>
             </ul>
         </Panel>
 
         <!-- 注册码列表 -->
         <Panel class="flex flex-col gap-3">
-            <h2 class="text-sm font-medium text-[var(--text-main)]">注册码</h2>
+            <h2 class="text-sm font-medium text-[var(--text-main)]">{{ t("accessCode.registrationCodes") }}</h2>
             <StateBlock v-if="listLoading && list.length === 0" state="loading" />
             <StateBlock v-else-if="listError && list.length === 0" state="error" :message="listError" :retry="() => loadList(true)" />
-            <StateBlock v-else-if="list.length === 0" state="empty" message="还没有注册码" />
+            <StateBlock v-else-if="list.length === 0" state="empty" :message="t('accessCode.noRegistrationCodes')" />
             <template v-else>
                 <ul class="flex flex-col gap-2">
                     <li v-for="code in list" :key="code.id" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--border-color)] bg-[var(--bg-subtle)] px-3 py-2">
                         <div class="min-w-0">
                             <p class="flex flex-wrap items-center gap-2"><span class="font-mono text-sm text-[var(--text-main)]">{{ code.code }}</span><span class="text-xs text-[var(--text-muted)]">{{ statusText(code) }}</span></p>
-                            <p class="text-xs text-[var(--text-muted)]">已用 {{ code.usedCount }} / {{ code.maxUses ?? "不限" }}{{ code.expiresAt ? ` · ${formatDate(code.expiresAt)} 到期` : "" }}{{ code.note ? ` · ${code.note}` : "" }}</p>
+                            <p class="text-xs text-[var(--text-muted)]">{{ t("accessCode.usage", {used: formatNumber(code.usedCount), maximum: code.maxUses === null ? t("common.unlimited") : formatNumber(code.maxUses)}) }}<span v-if="code.expiresAt"> · {{ t("accessCode.expires", {date: formatDate(code.expiresAt)}) }}</span><span v-if="code.note"> · {{ code.note }}</span></p>
                         </div>
-                        <div class="flex gap-1"><IconButton title="复制注册码" @click="copyText(code.code)"><span class="i-lucide-copy h-4 w-4"></span></IconButton><IconButton title="复制注册链接" @click="copyRegistrationLink(code.code)"><span class="i-lucide-link h-4 w-4"></span></IconButton><IconButton title="编辑设置" @click="openEdit(code)"><span class="i-lucide-settings-2 h-4 w-4"></span></IconButton><IconButton :title="code.disabledAt ? '启用' : '停用'" :variant="code.disabledAt ? 'accent' : 'danger'" @click="toggleDisabled(code)"><span :class="code.disabledAt ? 'i-lucide-play' : 'i-lucide-ban'" class="h-4 w-4"></span></IconButton></div>
+                        <div class="flex gap-1"><IconButton :title="t('accessCode.copyRegistration')" @click="copyText(code.code)"><span class="i-lucide-copy h-4 w-4"></span></IconButton><IconButton :title="t('accessCode.copyRegistrationLink')" @click="copyRegistrationLink(code.code)"><span class="i-lucide-link h-4 w-4"></span></IconButton><IconButton :title="t('accessCode.editSettings')" @click="openEdit(code)"><span class="i-lucide-settings-2 h-4 w-4"></span></IconButton><IconButton :title="code.disabledAt ? t('accessCode.enable') : t('accessCode.disable')" :variant="code.disabledAt ? 'accent' : 'danger'" @click="toggleDisabled(code)"><span :class="code.disabledAt ? 'i-lucide-play' : 'i-lucide-ban'" class="h-4 w-4"></span></IconButton></div>
                     </li>
                 </ul>
-                <div class="flex flex-col items-center gap-2"><Button v-if="next !== null" variant="secondary" size="sm" :loading="loadingMore" @click="loadList(false)">加载更多</Button><p class="text-xs text-[var(--text-muted)]">共 {{ total }} 个</p></div>
+                <div class="flex flex-col items-center gap-2"><Button v-if="next !== null" variant="secondary" size="sm" :loading="loadingMore" @click="loadList(false)">{{ t("common.loadMore") }}</Button><p class="text-xs text-[var(--text-muted)]">{{ t("common.totalItems", {count: formatNumber(total)}) }}</p></div>
             </template>
         </Panel>
 
         <!-- 注册码设置 -->
-        <Dialog :model-value="editing !== null" title="注册码设置" size="sm" show-cancel confirm-label="保存" :busy="editBusy" @update:model-value="(open: boolean) => { if (!open) editing = null; }" @confirm="saveEdit">
+        <Dialog :model-value="editing !== null" :title="t('accessCode.registrationSettings')" size="sm" show-cancel :cancel-label="t('common.cancel')" :confirm-label="t('common.save')" :close-label="t('common.close')" :busy="editBusy" @update:model-value="(open: boolean) => { if (!open) editing = null; }" @confirm="saveEdit">
             <div class="flex flex-col gap-3">
-                <FormField label="备注"><FormInput v-model="editNote" :maxlength="120" /></FormField>
-                <FormField label="使用次数"><select v-model="editLimitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">不限次数</option><option value="limited">限制次数</option></select></FormField>
-                <FormField v-if="editLimitMode === 'limited'" label="最多使用"><FormNumberInput v-model="editMaxUses" :min="editing?.usedCount || 1" :max="100000" /></FormField>
-                <FormField label="过期时间"><FormInput v-model="editExpiresAt" type="datetime-local" /></FormField>
+                <FormField :label="t('accessCode.note')"><FormInput v-model="editNote" :maxlength="120" /></FormField>
+                <FormField :label="t('accessCode.useLimit')"><select v-model="editLimitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">{{ t("accessCode.unlimitedUses") }}</option><option value="limited">{{ t("accessCode.limitedUses") }}</option></select></FormField>
+                <FormField v-if="editLimitMode === 'limited'" :label="t('accessCode.maxUses')"><FormNumberInput v-model="editMaxUses" :min="editing?.usedCount || 1" :max="100000" /></FormField>
+                <FormField :label="t('accessCode.expiresAt')"><FormInput v-model="editExpiresAt" type="datetime-local" /></FormField>
                 <p v-if="editError" class="text-sm text-[var(--status-danger)]">{{ editError }}</p>
             </div>
         </Dialog>

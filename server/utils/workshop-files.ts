@@ -1,7 +1,7 @@
 import {access, link, mkdir, open, readFile, rm, unlink} from "node:fs/promises";
 import type {FileHandle} from "node:fs/promises";
 import {dirname, isAbsolute, join, resolve} from "node:path";
-import {createError} from "h3";
+import {apiError} from "./api-error";
 
 // 版本 zip 的本地磁盘存储。根目录走 env 配置，布局 <filesDir>/<itemId>/<ordinal>.zip。
 
@@ -46,7 +46,7 @@ export async function commitVersionZip(tmpPath: string, itemId: number, ordinal:
     } catch (error) {
         const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
         if (code === "EEXIST") {
-            throw createError({statusCode: 409, message: "版本文件目标已存在，必须先完成孤儿状态检查"});
+            throw apiError(409, "version_conflict", "Version archive target already exists");
         }
         throw error;
     }
@@ -93,6 +93,6 @@ export async function readVersionZip(itemId: number, ordinal: number): Promise<B
     try {
         return await readFile(versionZipPath(itemId, ordinal));
     } catch {
-        throw createError({statusCode: 404, message: "版本文件不存在"});
+        throw apiError(404, "archive_missing", "Version archive is missing");
     }
 }

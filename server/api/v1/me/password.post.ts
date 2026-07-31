@@ -3,6 +3,7 @@ import {ChangePasswordRequestDtoSchema, validateBody} from "../../../utils/dto";
 import {hashUserPassword, verifyUserPassword} from "../../../utils/password";
 import {consumeRateLimit, envRateLimit} from "../../../utils/rate-limit";
 import {prisma} from "../../../database/prisma";
+import {apiError} from "../../../utils/api-error";
 
 /**
  * 修改密码（spec §5.1，cookie session 专属）。
@@ -12,7 +13,7 @@ import {prisma} from "../../../database/prisma";
 export default defineEventHandler(async (event): Promise<{ok: true}> => {
     const user = await requireCurrentUser(event);
     if (!consumeRateLimit(`password:${user.id}`, envRateLimit("NB_PASSWORD_RATE_LIMIT", 5), 60 * 60 * 1000)) {
-        throw createError({statusCode: 429, message: "操作过于频繁，请一小时后再试"});
+        throw apiError(429, "rate_limit_exceeded", "Password change rate limit exceeded");
     }
     const body = await validateBody(event, ChangePasswordRequestDtoSchema);
 
@@ -21,7 +22,7 @@ export default defineEventHandler(async (event): Promise<{ok: true}> => {
             ? await verifyUserPassword(body.currentPassword, user.passwordHash)
             : false;
         if (!matched) {
-            throw createError({statusCode: 401, message: "当前密码错误"});
+            throw apiError(401, "current_password_invalid", "Current password is invalid", {field: "currentPassword"});
         }
     }
 

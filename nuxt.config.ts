@@ -7,6 +7,7 @@ export default defineNuxtConfig({
         "@pinia/nuxt",
         "nuxt-auth-utils",
         "@nuxtjs/color-mode",
+        "@nuxtjs/i18n",
         "@notnotype/nb-ui/nuxt",
     ],
     compatibilityDate: "2026-07-03",
@@ -57,13 +58,30 @@ export default defineNuxtConfig({
         preference: "dark",
         fallback: "dark",
     },
+    i18n: {
+        strategy: "no_prefix",
+        defaultLocale: "zh-CN",
+        langDir: "locales",
+        locales: [
+            {code: "zh-CN", language: "zh-CN", name: "简体中文", file: "zh-CN.ts"},
+            {code: "en-US", language: "en-US", name: "English", file: "en-US.ts"},
+        ],
+        detectBrowserLanguage: {
+            useCookie: true,
+            cookieKey: "neuro-book-site-locale",
+            cookieSecure: process.env.NODE_ENV === "production",
+            cookieCrossOrigin: false,
+            alwaysRedirect: false,
+            // no_prefix 下所有页面都没有语言段；在任意首次入口执行检测，分享链接才能遵循浏览器语言。
+            redirectOn: "all",
+            fallbackLocale: "zh-CN",
+        },
+    },
     app: {
         head: {
-            htmlAttrs: {lang: "zh-CN"},
             // title 不在此设置：app.vue 的 titleTemplate 是唯一后缀出口，这里设了会被二次拼接
             meta: [
                 {name: "viewport", content: "width=device-width, initial-scale=1"},
-                {name: "description", content: "NeuroBook 官方站：账号关联、创意工坊与加密云备份。"},
             ],
         },
     },

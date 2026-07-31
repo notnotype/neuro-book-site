@@ -9,6 +9,7 @@ import {buildQuotaDto, toBackupDto} from "../../../utils/backup-dto";
 import {requireAccess} from "../../../utils/passport-guard";
 import {useStorageCapacityService} from "../../../utils/storage-capacity";
 import {consumeRateLimit, envRateLimit} from "../../../utils/rate-limit";
+import {apiError} from "../../../utils/api-error";
 
 /**
  * 上传备份（spec §9.2，backup:write）。流程：流式收文件到 tmp（边算 sha256）
@@ -19,11 +20,7 @@ import {consumeRateLimit, envRateLimit} from "../../../utils/rate-limit";
 export default defineEventHandler(async (event): Promise<BackupDto> => {
     const access = await requireAccess(event, "backup:write");
     if (!consumeRateLimit(`backup-upload:${access.user.id}`, envRateLimit("NB_BACKUP_UPLOAD_RATE_LIMIT", 6), 60 * 60 * 1000)) {
-        throw createError({
-            statusCode: 429,
-            message: "云备份上传过于频繁，请稍后再试",
-            data: {error: "rate_limit_exceeded"},
-        });
+        throw apiError(429, "rate_limit_exceeded", "Backup upload rate limit exceeded");
     }
     const capacity = useStorageCapacityService();
     return await capacity.withUpload(async () => {
@@ -35,7 +32,7 @@ export default defineEventHandler(async (event): Promise<BackupDto> => {
         const rotatedOut: InstanceBackup[] = [];
         try {
             if (upload.sha256 !== upload.meta.sha256) {
-                throw createError({statusCode: 400, message: "sha256 校验不一致，归档可能在传输中损坏，请重试"});
+                throw apiError(400, "sha256_mismatch", "Backup checksum mismatch");
             }
             // instanceLabel 取授权的实例名快照；面板（session）上传标记为 web
             const instanceLabel = access.authorization?.instanceName ?? "web";

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {onBeforeUnmount, onMounted, ref} from "vue";
 import {onBeforeRouteLeave} from "vue-router";
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {WorkshopItemDto} from "../../../shared/dto/workshop.dto";
 import type {PackageWorkbenchState} from "../../utils/workshop-package";
 import {buildDraftZip, createPackageDraft} from "../../utils/workshop-package";
@@ -11,6 +10,9 @@ definePageMeta({middleware: "auth"});
 const route = useRoute();
 const api = useWorkshopApi();
 const notification = useNotification();
+const {locale, t} = useI18n();
+const {resolve} = useLocalizedApiError();
+const {describeIssues} = useDraftIssueMessage();
 const editingSlug = computed(() => typeof route.params.slug === "string" ? route.params.slug : "");
 const editing = computed(() => editingSlug.value.length > 0 || item.value !== null);
 
@@ -23,9 +25,9 @@ const initialBytes = ref<Uint8Array | undefined>();
 const workbenchMounted = ref(false);
 const workbenchKey = ref(0);
 const workbench = ref<PackageWorkbenchState>({
-    draft: createPackageDraft("skill"),
+    draft: createPackageDraft("skill", "new-asset", "1.0.0", locale.value),
     packageJson: null,
-    error: "正在初始化包草稿",
+    error: t("publish.initializing"),
     validating: true,
     dirty: false,
 });
@@ -58,7 +60,7 @@ const canPublish = computed(() => Boolean(workbench.value.packageJson)
     && slugValid.value
     && item.value?.status !== "removed");
 
-useHead({title: computed(() => editing.value ? `更新 ${item.value?.title ?? "资产"}` : "发布资产")});
+useHead({title: computed(() => editing.value ? t("publish.updateTitle", {title: item.value?.title ?? t("publish.asset")}) : t("publish.title"))});
 
 /** 加载已有条目与最近源包；作者可读取 unlisted / removed 源包。 */
 async function load(): Promise<void> {
@@ -79,7 +81,7 @@ async function load(): Promise<void> {
         workbenchKey.value += 1;
         workbenchMounted.value = true;
     } catch (error) {
-        loadError.value = resolveApiErrorMessage(error, "发布工作台加载失败");
+        loadError.value = resolve(error, "publish.loadFailed");
     } finally {
         loading.value = false;
     }
@@ -116,7 +118,7 @@ async function publish(): Promise<void> {
           }
         : undefined);
     if (!built.ok) {
-        publishError.value = built.error;
+        publishError.value = describeIssues(built.issues);
         return;
     }
     publishing.value = true;
@@ -147,12 +149,12 @@ async function publish(): Promise<void> {
                 tags: tags.value,
             },
         });
-        notification.success(updatingVersion ? "新版本已发布" : "资产已发布");
+        notification.success(updatingVersion ? t("publish.versionPublished") : t("publish.published"));
         workbench.value = {...workbench.value, dirty: false, validating: false};
         metadataBaseline.value = metadataSnapshot.value;
         await navigateTo(`/items/${target.slug}`);
     } catch (error) {
-        publishError.value = resolveApiErrorMessage(error, "发布失败");
+        publishError.value = resolve(error, "publish.failed");
     } finally {
         publishing.value = false;
     }
@@ -160,23 +162,23 @@ async function publish(): Promise<void> {
 
 /** 放弃尚未上传首版的服务端草稿。 */
 async function discardDraft(): Promise<void> {
-    if (!item.value || item.value.latestVersion || !window.confirm("确认放弃这个未发布草稿并释放 slug？此操作不能撤销。")) {
+    if (!item.value || item.value.latestVersion || !window.confirm(t("publish.discardConfirm"))) {
         return;
     }
     try {
         await api.discardItemDraft(item.value.slug);
         workbench.value = {...workbench.value, dirty: false};
         metadataBaseline.value = metadataSnapshot.value;
-        notification.success("草稿已删除");
+        notification.success(t("publish.draftDeleted"));
         await navigateTo("/me?tab=published");
     } catch (error) {
-        publishError.value = resolveApiErrorMessage(error, "删除草稿失败");
+        publishError.value = resolve(error, "publish.deleteDraftFailed");
     }
 }
 
 /** 离开内存草稿时给出明确确认，避免把未上传内容误当作已保存。 */
 function confirmLeave(): boolean {
-    return !hasUnsavedDraft.value || window.confirm("当前草稿尚未发布，离开后这些改动会丢失。是否继续？");
+    return !hasUnsavedDraft.value || window.confirm(t("publish.leaveConfirm"));
 }
 
 function beforeUnload(event: BeforeUnloadEvent): void {
@@ -197,24 +199,24 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
 <template>
     <section class="mx-auto flex max-w-6xl flex-col gap-5">
         <div class="flex flex-wrap items-center justify-between gap-3">
-            <div><h1 class="text-xl font-semibold text-[var(--text-main)]">{{ editing ? "更新发布资产" : "发布资产" }}</h1><p class="mt-1 text-sm text-[var(--text-secondary)]">在浏览器内整理完整包，发布时才上传。</p></div>
-            <Button variant="secondary" @click="navigateTo('/me?tab=published')"><span class="i-lucide-list h-4 w-4"></span>我的发布</Button>
+            <div><h1 class="text-xl font-semibold text-[var(--text-main)]">{{ editing ? t("publish.updateHeading") : t("publish.title") }}</h1><p class="mt-1 text-sm text-[var(--text-secondary)]">{{ t("publish.description") }}</p></div>
+            <Button variant="secondary" @click="navigateTo('/me?tab=published')"><span class="i-lucide-list h-4 w-4"></span>{{ t("me.tabs.published") }}</Button>
         </div>
 
         <StateBlock v-if="loading" state="loading" />
         <StateBlock v-else-if="loadError" state="error" :message="loadError" :retry="load" />
         <template v-else-if="workbenchMounted">
-            <div v-if="item?.status === 'removed'" class="flex items-start gap-2 rounded-md border border-[var(--status-danger)] bg-[var(--bg-subtle)] px-3 py-2 text-sm text-[var(--text-secondary)]"><span class="i-lucide-circle-alert mt-0.5 h-4 w-4 shrink-0 text-[var(--status-danger)]"></span><span>该资产已被管理员下架。你可以查看、修订和导出源包，但管理员恢复前不能发布。</span></div>
+            <div v-if="item?.status === 'removed'" class="flex items-start gap-2 rounded-md border border-[var(--status-danger)] bg-[var(--bg-subtle)] px-3 py-2 text-sm text-[var(--text-secondary)]"><span class="i-lucide-circle-alert mt-0.5 h-4 w-4 shrink-0 text-[var(--status-danger)]"></span><span>{{ t("publish.removedWarning") }}</span></div>
 
             <!-- 条目元数据 -->
             <Panel class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField v-if="!editing" label="发布 slug" description="网页地址标识；默认根据安装名生成，创建后不可修改。" required>
+                <FormField v-if="!editing" :label="t('publish.slug')" :description="t('publish.slugDescription')" required>
                     <FormInput :model-value="slugInput" placeholder="my-awesome-skill" @update:model-value="setSlug" />
                 </FormField>
-                <FormField label="标题" required><FormInput v-model="title" /></FormField>
-                <FormField label="摘要"><FormInput v-model="summary" /></FormField>
-                <FormField label="标签" description="用逗号分隔，最多 10 个。"><FormInput v-model="tagsInput" placeholder="写作, 校对" /></FormField>
-                <FormField class="md:col-span-2" label="描述" description="支持 Markdown 语法。"><FormTextarea v-model="description" :rows="4" /></FormField>
+                <FormField :label="t('myItem.title')" required><FormInput v-model="title" /></FormField>
+                <FormField :label="t('myItem.summary')"><FormInput v-model="summary" /></FormField>
+                <FormField :label="t('myItem.tags')" :description="t('myItem.tagsDescription')"><FormInput v-model="tagsInput" :placeholder="t('publish.tagsPlaceholder')" /></FormField>
+                <FormField class="md:col-span-2" :label="t('myItem.description')" :description="t('myItem.markdownDescription')"><FormTextarea v-model="description" :rows="4" /></FormField>
             </Panel>
 
             <!-- 完整包编辑器 -->
@@ -230,14 +232,14 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             />
 
             <Panel class="flex flex-col gap-3">
-                <FormField label="更新说明（可选）"><FormTextarea v-model="changelog" :rows="3" placeholder="这一版改了什么…" /></FormField>
+                <FormField :label="t('publish.changelog')"><FormTextarea v-model="changelog" :rows="3" :placeholder="t('publish.changelogPlaceholder')" /></FormField>
                 <p v-if="workbench.error" class="text-sm text-[var(--status-danger)]">{{ workbench.error }}</p>
                 <p v-if="publishError" class="text-sm text-[var(--status-danger)]">{{ publishError }}</p>
                 <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-color)] pt-3">
-                    <p class="text-xs text-[var(--text-muted)]">{{ workbench.packageJson ? `${workbench.packageJson.neurobook.assetType} · ${workbench.packageJson.name} · v${workbench.packageJson.version}` : "请先修复 package.json" }}</p>
+                    <p class="text-xs text-[var(--text-muted)]">{{ workbench.packageJson ? `${workbench.packageJson.neurobook.assetType} · ${workbench.packageJson.name} · v${workbench.packageJson.version}` : t("publish.fixPackage") }}</p>
                     <div class="flex items-center gap-2">
-                        <Button v-if="item && !item.latestVersion" variant="danger" :disabled="publishing" @click="discardDraft"><span class="i-lucide-trash-2 h-4 w-4"></span>放弃草稿</Button>
-                        <Button :disabled="!canPublish" :loading="publishing" @click="publish"><span class="i-lucide-upload h-4 w-4"></span>{{ item?.latestVersion ? "发布新版本" : "发布资产" }}</Button>
+                        <Button v-if="item && !item.latestVersion" variant="danger" :disabled="publishing" @click="discardDraft"><span class="i-lucide-trash-2 h-4 w-4"></span>{{ t("publish.discard") }}</Button>
+                        <Button :disabled="!canPublish" :loading="publishing" @click="publish"><span class="i-lucide-upload h-4 w-4"></span>{{ item?.latestVersion ? t("publish.publishVersion") : t("publish.title") }}</Button>
                     </div>
                 </div>
             </Panel>

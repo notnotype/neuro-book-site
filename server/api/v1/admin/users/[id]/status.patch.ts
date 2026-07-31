@@ -2,6 +2,7 @@ import {prisma} from "../../../../../database/prisma";
 import {requireAdmin, requireIdParam} from "../../../../../utils/workshop";
 import {AdminUserStatusRequestSchema} from "../../../../../utils/admin-dto";
 import {validateBody} from "../../../../../utils/dto";
+import {apiError} from "../../../../../utils/api-error";
 
 /**
  * admin 封禁 / 解封用户。
@@ -15,11 +16,11 @@ export default defineEventHandler(async (event): Promise<{ok: true}> => {
     const body = await validateBody(event, AdminUserStatusRequestSchema);
 
     if (id === admin.id) {
-        throw createError({statusCode: 400, message: "不能封禁或解封自己"});
+        throw apiError(400, "self_status_change_forbidden", "Cannot change your own status");
     }
     const target = await prisma.user.findUnique({where: {id}, select: {id: true, sessionVersion: true}});
     if (!target) {
-        throw createError({statusCode: 404, message: "用户不存在"});
+        throw apiError(404, "user_not_found", "User not found");
     }
 
     await prisma.user.update({

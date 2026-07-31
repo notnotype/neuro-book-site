@@ -5,6 +5,7 @@ import type {PendingOAuthSession} from "./github-oauth";
 import type {User} from "../database/prisma";
 import {prisma} from "../database/prisma";
 import {siteOrigin} from "./site-config";
+import {apiError} from "./api-error";
 
 export type {AuthSessionDto, AuthUserDto};
 
@@ -116,10 +117,7 @@ export async function getCurrentUser(event: H3Event): Promise<User | null> {
 export async function requireCurrentUser(event: H3Event): Promise<User> {
     const user = await getCurrentUser(event);
     if (!user) {
-        throw createError({
-            statusCode: 401,
-            message: "请先登录",
-        });
+        throw apiError(401, "unauthorized", "Authentication required");
     }
     return user;
 }

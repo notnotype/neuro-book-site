@@ -4,6 +4,7 @@ import {requireAccess} from "../../../../utils/passport-guard";
 import {itemDtoInclude, requireOwnedItem, requireSlugParam, toItemDto} from "../../../../utils/workshop";
 import {UpdateItemRequestSchema} from "../../../../utils/workshop-dto";
 import {validateBody} from "../../../../utils/dto";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * 作者编辑条目元数据 / 自主下架与重新上架（published ↔ unlisted）。
@@ -17,10 +18,10 @@ export default defineEventHandler(async (event): Promise<WorkshopItemDto> => {
     const body = await validateBody(event, UpdateItemRequestSchema);
 
     if (item.status === "removed") {
-        throw createError({statusCode: 403, message: "条目已被管理员下架，无法操作"});
+        throw apiError(403, "item_removed", "Removed item cannot be modified");
     }
     if (body.status === "published" && item.versions.length === 0) {
-        throw createError({statusCode: 409, message: "首版上传成功前不能公开条目"});
+        throw apiError(409, "first_version_required", "First version is required before publishing");
     }
 
     const updated = await prisma.workshopItem.update({

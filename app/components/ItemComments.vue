@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {CommentDto} from "../../shared/dto/workshop.dto";
 
 // 条目评论区：楼层正序分页 + 登录可发表 + 本人/admin 可删（删除走确认 Dialog）。
@@ -10,6 +9,9 @@ const emit = defineEmits<{(e: "count-delta", delta: number): void}>();
 const api = useWorkshopApi();
 const {session} = useAuthState();
 const notification = useNotification();
+const localizedError = useLocalizedApiError();
+const {t} = useI18n();
+const {relativeTime, formatNumber} = useLocaleFormat();
 
 const PAGE_SIZE = 20;
 const comments = ref<CommentDto[]>([]);
@@ -52,9 +54,9 @@ async function load(reset: boolean): Promise<void> {
         nextOffset.value = page.hasMore ? page.nextOffset ?? null : null;
     } catch (error) {
         if (reset) {
-            errorMsg.value = resolveApiErrorMessage(error, "评论加载失败");
+            errorMsg.value = localizedError.resolve(error, "comments.loadFailed");
         } else {
-            notification.error(resolveApiErrorMessage(error, "加载更多失败"));
+            notification.error(localizedError.resolve(error, "common.loadMoreFailed"));
         }
     } finally {
         loading.value = false;
@@ -75,7 +77,7 @@ async function submit(): Promise<void> {
         draft.value = "";
         emit("count-delta", 1);
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "评论发表失败"));
+        notification.error(localizedError.resolve(error, "comments.postFailed"));
     } finally {
         posting.value = false;
     }
@@ -94,7 +96,7 @@ async function confirmDelete(): Promise<void> {
         emit("count-delta", -1);
         confirmingId.value = null;
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "删除失败"));
+        notification.error(localizedError.resolve(error, "common.deleteFailed"));
     } finally {
         deleting.value = false;
     }
@@ -107,19 +109,19 @@ onMounted(() => load(true));
     <div class="flex flex-col gap-4">
         <!-- 发表框（登录可见） -->
         <div v-if="isLoggedIn" class="flex flex-col gap-2">
-            <FormTextarea v-model="draft" :rows="3" placeholder="友善地留下你的想法…" :maxlength="2000" />
+            <FormTextarea v-model="draft" :rows="3" :placeholder="t('comments.placeholder')" :maxlength="2000" />
             <div class="flex justify-end">
-                <Button size="sm" :loading="posting" :disabled="draft.trim().length === 0" @click="submit">发表评论</Button>
+                <Button size="sm" :loading="posting" :disabled="draft.trim().length === 0" @click="submit">{{ t("comments.post") }}</Button>
             </div>
         </div>
         <p v-else class="rounded-md border border-[var(--border-color)] bg-[var(--bg-subtle)] px-3 py-2 text-sm text-[var(--text-secondary)]">
-            <NuxtLink to="/login" class="text-[var(--accent-text)] hover:underline">登录</NuxtLink> 后可以发表评论。
+            <NuxtLink to="/login" class="text-[var(--accent-text)] hover:underline">{{ t("comments.signInPrefix") }}</NuxtLink> {{ t("comments.signInSuffix") }}
         </p>
 
         <!-- 列表三态 -->
-        <StateBlock v-if="loading" state="loading" message="评论加载中…" />
+        <StateBlock v-if="loading" state="loading" :message="t('comments.loading')" />
         <StateBlock v-else-if="errorMsg" state="error" :message="errorMsg" :retry="() => load(true)" />
-        <StateBlock v-else-if="comments.length === 0" state="empty" message="还没有评论，来抢沙发" />
+        <StateBlock v-else-if="comments.length === 0" state="empty" :message="t('comments.empty')" />
         <template v-else>
             <ul class="flex flex-col gap-3">
                 <li v-for="comment in comments" :key="comment.id" class="rounded-md border border-[var(--border-color)] bg-[var(--bg-panel)] p-3">
@@ -129,7 +131,7 @@ onMounted(() => load(true));
                             <NuxtLink :to="`/users/${comment.author.username}`" class="font-medium text-[var(--text-main)] hover:text-[var(--accent-text)]">{{ comment.author.displayName }}</NuxtLink>
                             <span class="text-xs text-[var(--text-muted)]">{{ relativeTime(comment.createdAt) }}</span>
                         </div>
-                        <IconButton v-if="canDelete(comment)" title="删除评论" variant="danger" size="sm" @click="confirmingId = comment.id">
+                        <IconButton v-if="canDelete(comment)" :title="t('comments.deleteComment')" variant="danger" size="sm" @click="confirmingId = comment.id">
                             <span class="i-lucide-trash-2 h-4 w-4"></span>
                         </IconButton>
                     </div>
@@ -137,23 +139,25 @@ onMounted(() => load(true));
                 </li>
             </ul>
             <div class="flex flex-col items-center gap-2">
-                <Button v-if="nextOffset !== null" variant="secondary" size="sm" :loading="loadingMore" @click="load(false)">加载更多评论</Button>
-                <p class="text-xs text-[var(--text-muted)]">共 {{ total }} 条评论</p>
+                <Button v-if="nextOffset !== null" variant="secondary" size="sm" :loading="loadingMore" @click="load(false)">{{ t("comments.loadMore") }}</Button>
+                <p class="text-xs text-[var(--text-muted)]">{{ t("comments.total", {count: formatNumber(total)}) }}</p>
             </div>
         </template>
 
         <!-- 删除确认 -->
         <Dialog
             :model-value="confirmingId !== null"
-            title="删除评论"
+            :title="t('comments.deleteTitle')"
             size="sm"
             show-cancel
-            confirm-label="删除"
+            :confirm-label="t('common.delete')"
+            :cancel-label="t('common.cancel')"
+            :close-label="t('common.close')"
             :busy="deleting"
             @update:model-value="(visible) => { if (!visible) confirmingId = null; }"
             @confirm="confirmDelete"
         >
-            <p class="text-sm text-[var(--text-secondary)]">确定删除这条评论吗？此操作不可撤销。</p>
+            <p class="text-sm text-[var(--text-secondary)]">{{ t("comments.deleteDescription") }}</p>
         </Dialog>
     </div>
 </template>

@@ -17,6 +17,7 @@ import {
     readAgentAssetArchiveEntry,
     scanAgentAssetArchive,
 } from "./agent-asset-archive";
+import {apiError} from "./api-error";
 
 export type ParsedWorkshopPackage = {
     packageJson: AgentAssetPackageJson;
@@ -98,7 +99,7 @@ export async function listPackageEntries(zipPath: string): Promise<PackageEntryM
         const scan = await scanAgentAssetArchive(zipPath);
         return scan.entries.filter((entry) => !entry.directory).map((entry) => ({path: entry.path, size: entry.size}));
     } catch {
-        throw createError({statusCode: 500, message: "包文件损坏，无法解析"});
+        throw apiError(500, "archive_corrupt", "Package archive is corrupt");
     }
 }
 
@@ -112,9 +113,9 @@ export async function readPackageEntry(zipPath: string, path: string): Promise<U
         return await readAgentAssetArchiveEntry(zipPath, path, AGENT_ASSET_LIMITS.previewBytes);
     } catch (error) {
         if (error instanceof AgentAssetArchiveError && error.message.includes("超过允许上限")) {
-            throw createError({statusCode: 400, message: "文件超过在线预览大小上限"});
+            throw apiError(400, "file_preview_too_large", "File exceeds the preview limit");
         }
-        throw createError({statusCode: 500, message: "包文件损坏，无法解析"});
+        throw apiError(500, "archive_corrupt", "Package archive is corrupt");
     }
 }
 

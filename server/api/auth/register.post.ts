@@ -7,6 +7,7 @@ import type {User} from "../../database/prisma";
 import {Prisma, prisma} from "../../database/prisma";
 import {clientIp, isRegistrationEnabled} from "../../utils/site-config";
 import {consumeAccessCodes} from "../../utils/access-code";
+import {apiError} from "../../utils/api-error";
 
 /**
  * 注册码注册：必填注册码负责准入，可选邀请码只记录邀请归属。
@@ -15,15 +16,11 @@ import {consumeAccessCodes} from "../../utils/access-code";
  */
 export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
     if (!isRegistrationEnabled()) {
-        throw createError({
-            statusCode: 403,
-            message: "当前站点未开放注册",
-            data: {error: "registration_disabled"},
-        });
+        throw apiError(403, "registration_disabled", "Registration is disabled");
     }
     const ip = clientIp(event);
     if (!consumeRateLimit(`register:${ip}`, envRateLimit("NB_REGISTER_RATE_LIMIT", 5), 60 * 60 * 1000)) {
-        throw createError({statusCode: 429, message: "注册尝试过于频繁，请一小时后再试"});
+        throw apiError(429, "rate_limit_exceeded", "Registration rate limit exceeded");
     }
 
     const body = await validateBody(event, RegisterRequestDtoSchema);
@@ -33,10 +30,7 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
         select: {id: true},
     });
     if (existing) {
-        throw createError({
-            statusCode: 409,
-            message: "用户名已存在",
-        });
+        throw apiError(409, "username_taken", "Username already exists", {field: "username"});
     }
 
     const passwordHash = await hashUserPassword(body.password);
@@ -48,7 +42,7 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
             const created = await tx.user.create({
                 data: {
                     username: body.username,
-                    displayName: body.username,
+                    displayName: body.displayName,
                     passwordHash,
                     registrationCodeId: codeIds.registrationCodeId,
                     inviteCodeId: codeIds.inviteCodeId,
@@ -59,7 +53,7 @@ export default defineEventHandler(async (event): Promise<AuthSessionDto> => {
     } catch (error) {
         // 并发同名注册穿过预检查时撞 username 唯一约束
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-            throw createError({statusCode: 409, message: "用户名已存在"});
+            throw apiError(409, "username_taken", "Username already exists", {field: "username"});
         }
         throw error;
     }

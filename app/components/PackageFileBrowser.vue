@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {computed, ref, watch} from "vue";
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {FileTreeNode, FormSelectOption} from "@notnotype/nb-ui/components";
 import type {ItemVersionDto, PackageFileContentDto, PackageFileDto} from "../../shared/dto/workshop.dto";
 
@@ -10,6 +9,9 @@ const props = defineProps<{
 }>();
 
 const api = useWorkshopApi();
+const localizedError = useLocalizedApiError();
+const {t} = useI18n();
+const {formatBytes} = useLocaleFormat();
 const route = useRoute();
 const router = useRouter();
 const files = ref<PackageFileDto[]>([]);
@@ -85,7 +87,7 @@ const directoryEntries = computed(() => {
 const breadcrumb = computed(() => {
     const path = selectedFile.value ? parentPath(selectedFile.value.path) : selectedPath.value;
     const parts = path ? path.split("/") : [];
-    return [{label: "根目录", path: ""}, ...parts.map((part, index) => ({label: part, path: parts.slice(0, index + 1).join("/")}))];
+    return [{label: t("fileBrowser.root"), path: ""}, ...parts.map((part, index) => ({label: part, path: parts.slice(0, index + 1).join("/")}))];
 });
 
 const activeMarkdown = computed(() => {
@@ -123,7 +125,7 @@ async function loadList(targetVersion: string, targetPath: string): Promise<void
             return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"));
         }));
         if (targetPath && !result.files.some((file) => file.path === targetPath) && !directories.has(targetPath)) {
-            error.value = "指定的包内路径不存在";
+            error.value = t("fileBrowser.pathNotFound");
         } else {
             selectedPath.value = targetPath;
             const pathParts = targetPath.split("/").filter(Boolean);
@@ -135,7 +137,7 @@ async function loadList(targetVersion: string, targetPath: string): Promise<void
         }
     } catch (cause) {
         if (generation === requestGeneration) {
-            error.value = resolveApiErrorMessage(cause, "文件列表加载失败");
+            error.value = localizedError.resolve(cause, "fileBrowser.listFailed");
         }
     } finally {
         if (generation === requestGeneration) {
@@ -155,7 +157,7 @@ async function loadFile(path: string, targetVersion = version.value, generation 
         }
     } catch (cause) {
         if (generation === requestGeneration) {
-            error.value = resolveApiErrorMessage(cause, "文件内容加载失败");
+            error.value = localizedError.resolve(cause, "fileBrowser.contentFailed");
         }
     } finally {
         if (generation === requestGeneration) {
@@ -234,8 +236,8 @@ watch(
     <!-- GitHub 式包文件浏览：版本与路径都存入 URL。 -->
     <div class="overflow-hidden rounded-md border border-[var(--border-color)] bg-[var(--bg-panel)]">
         <div class="flex flex-wrap items-center gap-2 border-b border-[var(--border-color)] px-3 py-2">
-            <div class="w-40"><FormSelect :model-value="version" :options="versionOptions" aria-label="资产版本" @update:model-value="changeVersion" /></div>
-            <nav class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm" aria-label="包内路径">
+            <div class="w-40"><FormSelect :model-value="version" :options="versionOptions" :aria-label="t('fileBrowser.version')" @update:model-value="changeVersion" /></div>
+            <nav class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm" :aria-label="t('fileBrowser.path')">
                 <template v-for="(part, index) in breadcrumb" :key="part.path || 'root'">
                     <span v-if="index > 0" class="i-lucide-chevron-right h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]"></span>
                     <button type="button" class="shrink-0 text-[var(--accent-text)] hover:underline" @click="openPath(part.path)">{{ part.label }}</button>
@@ -245,7 +247,7 @@ watch(
                     <span class="min-w-0 truncate font-mono text-xs text-[var(--text-main)]">{{ baseName(selectedFile.path) }}</span>
                 </template>
             </nav>
-            <Button class="md:hidden" size="sm" variant="secondary" @click="mobileTreeOpen = !mobileTreeOpen"><span class="i-lucide-files h-4 w-4"></span>文件</Button>
+            <Button class="md:hidden" size="sm" variant="secondary" @click="mobileTreeOpen = !mobileTreeOpen"><span class="i-lucide-files h-4 w-4"></span>{{ t("fileBrowser.files") }}</Button>
         </div>
 
         <StateBlock v-if="listLoading && files.length === 0" state="loading" />
@@ -256,11 +258,11 @@ watch(
                     :nodes="treeNodes"
                     :selected-id="selectedPath || null"
                     :expanded-ids="expandedIds"
-                    aria-label="资产包文件"
+                    :aria-label="t('fileBrowser.tree')"
                     @update:expanded-ids="expandedIds = $event"
                     @select="selectNode"
                     @activate="selectNode"
-                />
+                ><template #empty>{{ t("fileBrowser.empty") }}</template></FileTree>
             </aside>
 
             <section class="min-w-0 overflow-auto p-4">
@@ -268,7 +270,7 @@ watch(
                 <template v-else-if="selectedFile && !selectedFile.previewable">
                     <div class="flex min-h-72 flex-col items-center justify-center gap-3 text-center text-[var(--text-muted)]">
                         <span class="i-lucide-file h-9 w-9"></span>
-                        <div><p class="font-mono text-sm text-[var(--text-main)]">{{ selectedFile.path }}</p><p class="mt-1 text-xs">{{ formatBytes(selectedFile.size) }} · 不支持在线预览</p></div>
+                        <div><p class="font-mono text-sm text-[var(--text-main)]">{{ selectedFile.path }}</p><p class="mt-1 text-xs">{{ formatBytes(selectedFile.size) }} · {{ t("fileBrowser.previewUnsupported") }}</p></div>
                     </div>
                 </template>
                 <template v-else-if="active">

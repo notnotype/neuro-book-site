@@ -2,6 +2,7 @@ import type {PendingOAuthDto} from "../../../../shared/dto/auth.dto";
 import {getPendingOAuthSession} from "../../../utils/auth";
 import {suggestUsername} from "../../../utils/github-oauth";
 import {isGitHubOAuthEnabled} from "../../../utils/site-config";
+import {apiError} from "../../../utils/api-error";
 
 /**
  * 补全注册页读取待完成的 GitHub 身份（不含 providerUserId 内部字段）。
@@ -9,11 +10,11 @@ import {isGitHubOAuthEnabled} from "../../../utils/site-config";
  */
 export default defineEventHandler(async (event): Promise<PendingOAuthDto> => {
     if (!isGitHubOAuthEnabled()) {
-        throw createError({statusCode: 404, message: "Not Found"});
+        throw apiError(404, "not_found", "Not Found");
     }
     const pending = await getPendingOAuthSession(event);
     if (!pending) {
-        throw createError({statusCode: 404, message: "没有待完成的 GitHub 注册，请从登录页重新发起"});
+        throw apiError(404, "oauth_registration_missing", "No pending GitHub registration");
     }
     return {
         provider: pending.provider,

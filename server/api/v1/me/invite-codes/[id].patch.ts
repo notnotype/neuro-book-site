@@ -5,6 +5,7 @@ import {UpdateAccessCodeRequestSchema} from "../../../../utils/access-code-dto";
 import {requireCurrentUser} from "../../../../utils/auth";
 import {validateBody} from "../../../../utils/dto";
 import {requireIdParam} from "../../../../utils/workshop";
+import {apiError} from "../../../../utils/api-error";
 
 /** 创建者修改自己的邀请码；他人邀请码统一按不存在处理。 */
 export default defineEventHandler(async (event): Promise<InviteCodeDto> => {
@@ -13,7 +14,7 @@ export default defineEventHandler(async (event): Promise<InviteCodeDto> => {
     const body = await validateBody(event, UpdateAccessCodeRequestSchema);
     const existing = await prisma.inviteCode.findFirst({where: {id, ownerId: user.id}});
     if (!existing) {
-        throw createError({statusCode: 404, message: "邀请码不存在"});
+        throw apiError(404, "invite_code_not_found", "Invite code not found");
     }
     const result = await prisma.inviteCode.updateMany({
         where: {
@@ -29,7 +30,7 @@ export default defineEventHandler(async (event): Promise<InviteCodeDto> => {
         },
     });
     if (result.count !== 1) {
-        throw createError({statusCode: 400, message: "使用上限不能小于已使用次数"});
+        throw apiError(400, "max_uses_below_used", "Maximum uses cannot be below current uses", {field: "maxUses"});
     }
     const updated = await prisma.inviteCode.findUniqueOrThrow({where: {id}});
     return toAccessCodeDto(updated);

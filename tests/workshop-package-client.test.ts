@@ -106,7 +106,7 @@ describe("资产包浏览器草稿", () => {
 
     it("拒绝伪装成目录但实际带有输出内容的 ZIP 条目", async () => {
         const imported = await draftFromZip(zipSync({"fake-directory/": strToU8("payload")}));
-        expect(imported).toMatchObject({ok: false, error: expect.stringMatching(/目录条目包含文件内容/)});
+        expect(imported).toMatchObject({ok: false, issues: [{code: "zip_directory_content", path: "fake-directory"}]});
     });
 
     it("结构化更新 package.json 保留作者字段、执行锁门禁并支持 SemVer bump", () => {
@@ -116,7 +116,7 @@ describe("资产包浏览器草稿", () => {
         enriched.scripts = {check: "bun test"};
         draft = updateDraftFile(draft, "package.json", `${JSON.stringify(enriched, null, 4)}\n`);
         draft = updateDraftPackage(draft, {version: bumpDraftVersion("1.2.3", "minor") ?? ""});
-        expect(parseDraftPackage(draft)).toMatchObject({ok: false, error: expect.stringMatching(/bun\.lock/)});
+        expect(parseDraftPackage(draft)).toMatchObject({ok: false, issues: [{code: "missing_bun_lock", path: "bun.lock"}]});
         const withLock = addDraftEntry(draft, {path: "bun.lock", kind: "file", bytes: strToU8("lockfileVersion = 1")});
         expect(withLock.ok).toBe(true);
         if (!withLock.ok) return;
@@ -149,6 +149,6 @@ describe("资产包浏览器草稿", () => {
         const draft = createPackageDraft("skill", "demo-skill");
         expect(addDraftEntry(draft, {path: "CON.txt", kind: "file", bytes: strToU8("bad")})).toMatchObject({ok: false});
         const many = Array.from({length: 501}, (_, index) => ({path: `files/${index}.txt`, kind: "file" as const, bytes: strToU8("x")}));
-        expect(mergeDraftEntries(draft, many, true)).toMatchObject({ok: false, error: expect.stringMatching(/500/)});
+        expect(mergeDraftEntries(draft, many, true)).toMatchObject({ok: false, issues: [{code: "entry_limit", count: 500}]});
     });
 });

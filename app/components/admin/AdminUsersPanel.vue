@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue";
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {AdminUserDto} from "../../../shared/dto/admin.dto";
 
 // admin 用户管理：搜索 + 分页列表，行内封禁/解封、授予/收回 admin（两步确认走 Dialog）。
 const api = useWorkshopApi();
 const notification = useNotification();
 const {session} = useAuthState();
+const localizedError = useLocalizedApiError();
+const {t} = useI18n();
+const {formatDate, relativeTime, formatNumber} = useLocaleFormat();
 
 const PAGE_SIZE = 20;
 const users = ref<AdminUserDto[]>([]);
@@ -21,12 +23,16 @@ const search = ref("");
 const pending = ref<{user: AdminUserDto; action: "disable" | "enable" | "promote" | "demote"} | null>(null);
 const acting = ref(false);
 
-const ACTION_TEXT = {
-    disable: {title: "封禁用户", verb: "封禁", desc: "封禁后该用户无法登录，在线会话与实例授权立即失效；其条目不会自动下架。"},
-    enable: {title: "解封用户", verb: "解封", desc: "解封后该用户可重新登录。"},
-    promote: {title: "授予管理员", verb: "授予 admin", desc: "对方将获得全部管理权限，并被踢下线需重新登录。"},
-    demote: {title: "收回管理员", verb: "收回 admin", desc: "对方将失去管理权限，并被踢下线需重新登录。"},
-} as const;
+type AdminAction = "disable" | "enable" | "promote" | "demote";
+
+/** 当前语言的危险操作标题、动词和说明。 */
+function actionText(action: AdminAction): {title: string; verb: string; description: string} {
+    return {
+        title: t(`admin.users.actions.${action}.title`),
+        verb: t(`admin.users.actions.${action}.verb`),
+        description: t(`admin.users.actions.${action}.description`),
+    };
+}
 
 async function load(reset: boolean): Promise<void> {
     if (reset) {
@@ -43,9 +49,9 @@ async function load(reset: boolean): Promise<void> {
         next.value = page.hasMore ? page.nextOffset ?? null : null;
     } catch (error) {
         if (reset) {
-            errorMsg.value = resolveApiErrorMessage(error, "加载失败");
+            errorMsg.value = localizedError.resolve(error, "common.loadFailed");
         } else {
-            notification.error(resolveApiErrorMessage(error, "加载更多失败"));
+            notification.error(localizedError.resolve(error, "common.loadMoreFailed"));
         }
     } finally {
         loading.value = false;
@@ -65,11 +71,11 @@ async function confirmAction(): Promise<void> {
         } else {
             await api.setUserRole(user.id, action === "promote" ? "admin" : "user");
         }
-        notification.success(`已${ACTION_TEXT[action].verb} @${user.username}`);
+        notification.success(t("admin.users.actionSuccess", {action: actionText(action).verb, username: user.username}));
         pending.value = null;
         await load(true);
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "操作失败"));
+        notification.error(localizedError.resolve(error, "common.actionFailed"));
     } finally {
         acting.value = false;
     }
@@ -89,14 +95,14 @@ onMounted(() => load(true));
         <form class="flex items-center gap-2" @submit.prevent="load(true)">
             <div class="relative w-full max-w-xs">
                 <span class="i-lucide-search pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"></span>
-                <input v-model="search" type="search" placeholder="搜索用户名 / 昵称" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-sm text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)]" />
+                <input v-model="search" type="search" :placeholder="t('admin.users.searchPlaceholder')" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-sm text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)]" />
             </div>
-            <Button type="submit" variant="secondary" size="sm">搜索</Button>
+            <Button type="submit" variant="secondary" size="sm">{{ t("admin.users.search") }}</Button>
         </form>
 
         <StateBlock v-if="loading && users.length === 0" state="loading" />
         <StateBlock v-else-if="errorMsg && users.length === 0" state="error" :message="errorMsg" :retry="() => load(true)" />
-        <StateBlock v-else-if="users.length === 0" state="empty" message="没有匹配的用户" />
+        <StateBlock v-else-if="users.length === 0" state="empty" :message="t('admin.users.empty')" />
         <template v-else>
             <ul class="flex flex-col gap-2">
                 <li v-for="user in users" :key="user.id" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--border-color)] bg-[var(--bg-panel)] px-3 py-2.5">
@@ -108,32 +114,32 @@ onMounted(() => load(true));
                                 <span class="truncate">{{ user.displayName }}</span>
                                 <span class="shrink-0 text-xs text-[var(--text-muted)]">@{{ user.username }}</span>
                                 <span v-if="user.role === 'admin'" class="inline-flex shrink-0 items-center rounded-full border border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.12)] px-1.5 py-0.5 text-[10px] text-[#38bdf8]">admin</span>
-                                <span v-if="user.status === 'disabled'" class="inline-flex shrink-0 items-center rounded-full border border-[rgba(244,63,94,0.35)] bg-[rgba(244,63,94,0.12)] px-1.5 py-0.5 text-[10px] text-[var(--status-danger)]">已封禁</span>
-                                <span v-if="user.hasGithub" class="i-lucide-github h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" title="已绑定 GitHub"></span>
-                                <span v-if="!user.hasPassword" class="inline-flex shrink-0 items-center rounded-full border border-[var(--border-color)] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]" title="OAuth 注册，未设密码">免密</span>
+                                <span v-if="user.status === 'disabled'" class="inline-flex shrink-0 items-center rounded-full border border-[rgba(244,63,94,0.35)] bg-[rgba(244,63,94,0.12)] px-1.5 py-0.5 text-[10px] text-[var(--status-danger)]">{{ t("admin.users.disabled") }}</span>
+                                <span v-if="user.hasGithub" class="i-lucide-github h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" :title="t('admin.users.githubBound')"></span>
+                                <span v-if="!user.hasPassword" class="inline-flex shrink-0 items-center rounded-full border border-[var(--border-color)] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]" :title="t('admin.users.passwordlessTitle')">{{ t("admin.users.passwordless") }}</span>
                             </p>
-                            <p class="text-xs text-[var(--text-muted)]">条目 {{ user.itemCount }} · 注册于 {{ formatDate(user.createdAt) }} · {{ user.lastLoginAt ? `最近登录 ${relativeTime(user.lastLoginAt)}` : "从未登录" }}</p>
+                            <p class="text-xs text-[var(--text-muted)]">{{ t("admin.users.summary", {items: formatNumber(user.itemCount), created: formatDate(user.createdAt), login: user.lastLoginAt ? t("admin.users.recentLogin", {time: relativeTime(user.lastLoginAt)}) : t("admin.users.neverLoggedIn")}) }}</p>
                         </div>
                     </div>
                     <!-- 右：操作（不对自己展示） -->
                     <div v-if="!isSelf(user)" class="flex shrink-0 items-center gap-2">
-                        <Button v-if="user.status === 'active'" size="sm" variant="danger" @click="pending = {user, action: 'disable'}">封禁</Button>
-                        <Button v-else size="sm" variant="secondary" @click="pending = {user, action: 'enable'}">解封</Button>
-                        <Button v-if="user.role === 'user'" size="sm" variant="secondary" @click="pending = {user, action: 'promote'}">设为 admin</Button>
-                        <Button v-else size="sm" variant="secondary" @click="pending = {user, action: 'demote'}">收回 admin</Button>
+                        <Button v-if="user.status === 'active'" size="sm" variant="danger" @click="pending = {user, action: 'disable'}">{{ t("admin.users.disable") }}</Button>
+                        <Button v-else size="sm" variant="secondary" @click="pending = {user, action: 'enable'}">{{ t("admin.users.enable") }}</Button>
+                        <Button v-if="user.role === 'user'" size="sm" variant="secondary" @click="pending = {user, action: 'promote'}">{{ t("admin.users.promote") }}</Button>
+                        <Button v-else size="sm" variant="secondary" @click="pending = {user, action: 'demote'}">{{ t("admin.users.demote") }}</Button>
                     </div>
-                    <span v-else class="text-xs text-[var(--text-muted)]">（当前登录）</span>
+                    <span v-else class="text-xs text-[var(--text-muted)]">{{ t("admin.users.current") }}</span>
                 </li>
             </ul>
             <div class="flex flex-col items-center gap-2">
-                <Button v-if="next !== null" variant="secondary" size="sm" :loading="loadingMore" @click="load(false)">加载更多</Button>
-                <p class="text-xs text-[var(--text-muted)]">共 {{ total }} 人</p>
+                <Button v-if="next !== null" variant="secondary" size="sm" :loading="loadingMore" @click="load(false)">{{ t("common.loadMore") }}</Button>
+                <p class="text-xs text-[var(--text-muted)]">{{ t("common.totalPeople", {count: formatNumber(total)}) }}</p>
             </div>
         </template>
 
         <!-- 危险操作确认 -->
-        <Dialog :model-value="pending !== null" :title="pending ? ACTION_TEXT[pending.action].title : ''" size="sm" show-cancel :confirm-label="pending ? `确认${ACTION_TEXT[pending.action].verb}` : '确认'" :busy="acting" @confirm="confirmAction" @update:model-value="(open: boolean) => { if (!open) pending = null; }">
-            <p v-if="pending" class="text-sm text-[var(--text-secondary)]">对 @{{ pending.user.username }} 执行「{{ ACTION_TEXT[pending.action].verb }}」？{{ ACTION_TEXT[pending.action].desc }}</p>
+        <Dialog :model-value="pending !== null" :title="pending ? actionText(pending.action).title : ''" size="sm" show-cancel :cancel-label="t('common.cancel')" :close-label="t('common.close')" :confirm-label="pending ? t('admin.users.confirmAction', {action: actionText(pending.action).verb}) : t('common.confirm')" :busy="acting" @confirm="confirmAction" @update:model-value="(open: boolean) => { if (!open) pending = null; }">
+            <p v-if="pending" class="text-sm text-[var(--text-secondary)]">{{ t("admin.users.confirmDescription", {username: pending.user.username, action: actionText(pending.action).verb, description: actionText(pending.action).description}) }}</p>
         </Dialog>
     </div>
 </template>

@@ -4,6 +4,8 @@ import {createWriteStream} from "node:fs";
 import {mkdir, rm} from "node:fs/promises";
 import {join} from "node:path";
 import type {H3Event} from "h3";
+import {normalizeValidationIssues} from "../../shared/validation-issues";
+import {apiError} from "./api-error";
 import {backupMaxFileBytes, backupTmpDir} from "./backup-files";
 import {BackupUploadMetaSchema, type BackupUploadMeta} from "./backup-dto";
 
@@ -32,7 +34,7 @@ export async function parseBackupUpload(event: H3Event): Promise<ParsedBackupUpl
     // 请求头预检：声明体积明显超限直接拒（省流量；流中实测仍兜底防伪造头）
     const declaredLength = Number.parseInt(String(req.headers["content-length"] ?? ""), 10);
     if (Number.isSafeInteger(declaredLength) && declaredLength > maxBytes + 64 * 1024) {
-        throw createError({statusCode: 413, message: "备份体积超过单份上限", data: {error: "file_too_large"}});
+        throw apiError(413, "file_too_large", "Backup exceeds the per-file limit");
     }
 
     await mkdir(backupTmpDir(), {recursive: true});
@@ -103,7 +105,7 @@ export async function parseBackupUpload(event: H3Event): Promise<ParsedBackupUpl
             });
             // busboy 的 fileSize limit 命中：流被截断，视为超限
             file.on("limit", () => {
-                fail(createError({statusCode: 413, message: "备份体积超过单份上限", data: {error: "file_too_large"}}));
+                fail(apiError(413, "file_too_large", "Backup exceeds the per-file limit"));
             });
             file.on("error", fail);
         });
@@ -121,34 +123,32 @@ export async function parseBackupUpload(event: H3Event): Promise<ParsedBackupUpl
                     return;
                 }
                 if (!fileSeen) {
-                    fail(createError({statusCode: 400, message: "缺少归档文件字段 file"}));
+                    fail(apiError(400, "multipart_file_required", "Missing multipart file field"));
                     return;
                 }
                 if (!fileName.toLowerCase().endsWith(".nbbackup")
                     || mimeType !== "application/vnd.neurobook.backup"
                     || encryptedPrefixLength !== encryptedBackupMagic.byteLength
                     || !encryptedPrefix.equals(encryptedBackupMagic)) {
-                    fail(createError({
-                        statusCode: 400,
-                        message: "只接受 NeuroBook 加密备份（.nbbackup）",
-                        data: {error: "invalid_backup_format"},
-                    }));
+                    fail(apiError(400, "invalid_backup_format", "Only encrypted NeuroBook backups are accepted"));
                     return;
                 }
                 if (metaRaw === null) {
-                    fail(createError({statusCode: 400, message: "缺少 meta 字段"}));
+                    fail(apiError(400, "multipart_meta_required", "Missing multipart meta field"));
                     return;
                 }
                 let metaJson: unknown;
                 try {
                     metaJson = JSON.parse(metaRaw);
                 } catch {
-                    fail(createError({statusCode: 400, message: "meta 不是合法 JSON"}));
+                    fail(apiError(400, "invalid_metadata_json", "Metadata is not valid JSON"));
                     return;
                 }
                 const meta = BackupUploadMetaSchema.safeParse(metaJson);
                 if (!meta.success) {
-                    fail(createError({statusCode: 400, message: meta.error.issues.map((issue) => issue.message).join("；")}));
+                    fail(apiError(400, "validation_failed", "Backup metadata validation failed", {
+                        issues: normalizeValidationIssues(meta.error.issues),
+                    }));
                     return;
                 }
                 settled = true;

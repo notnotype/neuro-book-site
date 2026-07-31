@@ -4,6 +4,7 @@ import {prisma} from "../../../../database/prisma";
 import {backupFilePath} from "../../../../utils/backup-files";
 import {requireAccess} from "../../../../utils/passport-guard";
 import {requireIdParam} from "../../../../utils/workshop";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * 下载备份字节流（spec §9.2，backup:read）：响应头带 x-nb-sha256 供客户端校验。
@@ -14,7 +15,7 @@ export default defineEventHandler(async (event) => {
     const id = requireIdParam(event);
     const backup = await prisma.instanceBackup.findFirst({where: {id, userId: user.id}});
     if (!backup) {
-        throw createError({statusCode: 404, message: "备份不存在"});
+        throw apiError(404, "backup_not_found", "Backup not found");
     }
 
     const filePath = backupFilePath(backup.storagePath);
@@ -22,7 +23,7 @@ export default defineEventHandler(async (event) => {
     try {
         fileSize = (await stat(filePath)).size;
     } catch {
-        throw createError({statusCode: 404, message: "备份文件不存在"});
+        throw apiError(404, "backup_file_missing", "Backup file is missing");
     }
 
     setHeaders(event, {

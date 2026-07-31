@@ -2,6 +2,7 @@ import type {DeviceCodeStatus, PendingDeviceDto} from "../../../../../shared/dto
 import {prisma} from "../../../../database/prisma";
 import {requireCurrentUser} from "../../../../utils/auth";
 import {normalizeUserCode} from "../../../../utils/passport";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * /link 页查待批设备码（spec §6.3，cookie session 专属）。
@@ -12,7 +13,7 @@ export default defineEventHandler(async (event): Promise<PendingDeviceDto> => {
     const userCode = normalizeUserCode(decodeURIComponent(getRouterParam(event, "userCode") ?? ""));
     const code = await prisma.passportDeviceCode.findUnique({where: {userCode}});
     if (!code) {
-        throw createError({statusCode: 404, message: "设备码不存在，请核对输入"});
+        throw apiError(404, "device_code_not_found", "Device code not found");
     }
     let status = code.status as DeviceCodeStatus;
     if (status === "pending" && code.expiresAt.getTime() <= Date.now()) {

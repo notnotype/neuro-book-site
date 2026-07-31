@@ -3,6 +3,7 @@ import {requireCurrentUser} from "../../../../../utils/auth";
 import {validateBody} from "../../../../../utils/dto";
 import {normalizeUserCode} from "../../../../../utils/passport";
 import {ApproveDeviceRequestSchema} from "../../../../../utils/passport-dto";
+import {apiError} from "../../../../../utils/api-error";
 
 /**
  * /link 页批准设备码（spec §6.3，cookie session 专属）：创建实例授权并回写设备码。
@@ -15,10 +16,10 @@ export default defineEventHandler(async (event): Promise<{ok: true}> => {
 
     const code = await prisma.passportDeviceCode.findUnique({where: {userCode}});
     if (!code) {
-        throw createError({statusCode: 404, message: "设备码不存在，请核对输入"});
+        throw apiError(404, "device_code_not_found", "Device code not found");
     }
     if (code.status !== "pending" || code.expiresAt.getTime() <= Date.now()) {
-        throw createError({statusCode: 409, message: "设备码已被处理或已过期，请在实例上重新发起关联"});
+        throw apiError(409, "device_code_unavailable", "Device code was handled or expired");
     }
 
     await prisma.$transaction(async (tx) => {
@@ -40,7 +41,7 @@ export default defineEventHandler(async (event): Promise<{ok: true}> => {
         });
         if (updated.count === 0) {
             // 并发已被处理：回滚本次创建的授权
-            throw createError({statusCode: 409, message: "设备码已被处理"});
+            throw apiError(409, "device_code_unavailable", "Device code was already handled");
         }
     });
 

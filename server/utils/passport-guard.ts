@@ -2,6 +2,7 @@ import type {H3Event} from "h3";
 import type {PassportScope} from "../../shared/dto/passport.dto";
 import type {PassportAuthorization, User} from "../database/prisma";
 import {prisma} from "../database/prisma";
+import {apiError} from "./api-error";
 import {getCurrentUser} from "./auth";
 import {hashToken} from "./passport";
 
@@ -34,11 +35,11 @@ async function requireBearerAccess(scope: PassportScope, bearerToken: string): P
         && token.authorization.revokedAt === null
         && token.authorization.user.status === "active";
     if (!token || !valid) {
-        throw createError({statusCode: 401, message: "access token 无效或已过期"});
+        throw apiError(401, "invalid_access_token", "Access token is invalid or expired");
     }
     const scopes = JSON.parse(token.authorization.scopesJson) as string[];
     if (!scopes.includes(scope)) {
-        throw createError({statusCode: 403, message: `当前授权缺少 ${scope} 权限`, data: {error: "insufficient_scope"}});
+        throw apiError(403, "insufficient_scope", `Authorization lacks ${scope}`);
     }
     const authorization = token.authorization;
     if (!authorization.lastUsedAt || Date.now() - authorization.lastUsedAt.getTime() > LAST_USED_UPDATE_INTERVAL_MS) {
@@ -59,7 +60,7 @@ export async function requireAccess(event: H3Event, scope: PassportScope): Promi
     }
     const user = await getCurrentUser(event);
     if (!user) {
-        throw createError({statusCode: 401, message: "请先登录"});
+        throw apiError(401, "unauthorized", "Authentication required");
     }
     return {user, via: "session", authorization: null};
 }

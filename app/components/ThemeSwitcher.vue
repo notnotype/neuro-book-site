@@ -4,6 +4,15 @@ import {themeIds, themeMeta, themes} from "~/theme/themes";
 // 主题切换器：以调色板预览 swatch 展示全部内置主题，点击即切换并持久化。
 // 每个 swatch 用对应主题自身的色值渲染预览，因此无论当前主题是什么都能看清各主题风格。
 const {current, setTheme} = useTheme();
+const {t} = useI18n();
+
+const themeLabel = {
+    dark: "theme.dark",
+    light: "theme.light",
+    catppuccin: "theme.catppuccin",
+    dracula: "theme.dracula",
+    "tokyo-night": "theme.tokyoNight",
+} as const;
 </script>
 
 <template>
@@ -24,8 +33,8 @@ const {current, setTheme} = useTheme();
                 <span class="absolute bottom-1.5 right-1 h-1 w-3 rounded-full" :style="{background: themes[id]['--text-main']}"></span>
             </span>
             <span class="min-w-0">
-                <span class="block text-sm font-medium text-[var(--text-main)]">{{ themeMeta[id].label }}</span>
-                <span class="block text-[11px] capitalize text-[var(--text-muted)]">{{ themeMeta[id].appearance }}</span>
+                <span class="block text-sm font-medium text-[var(--text-main)]">{{ t(themeLabel[id]) }}</span>
+                <span class="block text-[11px] text-[var(--text-muted)]">{{ t(themeMeta[id].appearance === "dark" ? "theme.darkAppearance" : "theme.lightAppearance") }}</span>
             </span>
             <span v-if="current === id" class="i-lucide-check ml-1 h-4 w-4 shrink-0 text-[var(--accent-main)]"></span>
         </button>

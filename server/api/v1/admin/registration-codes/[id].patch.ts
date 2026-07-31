@@ -4,6 +4,7 @@ import {toAccessCodeDto} from "../../../../utils/access-code";
 import {UpdateAccessCodeRequestSchema} from "../../../../utils/access-code-dto";
 import {validateBody} from "../../../../utils/dto";
 import {requireAdmin, requireIdParam} from "../../../../utils/workshop";
+import {apiError} from "../../../../utils/api-error";
 
 /** 修改注册码限制或停用状态；已使用次数不能被新的有限上限截断。 */
 export default defineEventHandler(async (event): Promise<RegistrationCodeDto> => {
@@ -12,7 +13,7 @@ export default defineEventHandler(async (event): Promise<RegistrationCodeDto> =>
     const body = await validateBody(event, UpdateAccessCodeRequestSchema);
     const existing = await prisma.registrationCode.findUnique({where: {id}});
     if (!existing) {
-        throw createError({statusCode: 404, message: "注册码不存在"});
+        throw apiError(404, "registration_code_not_found", "Registration code not found");
     }
     const result = await prisma.registrationCode.updateMany({
         where: {
@@ -27,7 +28,7 @@ export default defineEventHandler(async (event): Promise<RegistrationCodeDto> =>
         },
     });
     if (result.count !== 1) {
-        throw createError({statusCode: 400, message: "使用上限不能小于已使用次数"});
+        throw apiError(400, "max_uses_below_used", "Maximum uses cannot be below current uses", {field: "maxUses"});
     }
     const updated = await prisma.registrationCode.findUniqueOrThrow({where: {id}});
     return toAccessCodeDto(updated);

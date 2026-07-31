@@ -5,6 +5,7 @@ import {deviceCodeTtlSeconds, devicePollIntervalSeconds, generateToken, generate
 import {DeviceCodeRequestSchema} from "../../../../utils/passport-dto";
 import {consumeRateLimit} from "../../../../utils/rate-limit";
 import {clientIp, siteOrigin} from "../../../../utils/site-config";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * 设备码申请（spec §6.2，匿名，实例发起）：生成 deviceCode + userCode，落库 pending 态。
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event): Promise<DeviceCodeDto> => {
 
     const ip = clientIp(event);
     if (!consumeRateLimit(`passport-device-code:${ip}`, 10, 60 * 60 * 1000)) {
-        throw createError({statusCode: 429, message: "设备码申请过于频繁，请稍后再试"});
+        throw apiError(429, "rate_limit_exceeded", "Device code rate limit exceeded");
     }
 
     const deviceCode = generateToken("nbp_dc_");

@@ -1,9 +1,10 @@
 import type {H3Event} from "h3";
-import {createError, getRouterParam} from "h3";
+import {getRouterParam} from "h3";
 import type {CommentDto, ItemAuthorDto, ItemVersionDto, ItemViewerStateDto, PageDto, ReportDto, WorkshopItemDto} from "../../shared/dto/workshop.dto";
 import type {Comment, ItemVersion, Report, User, WorkshopItem} from "../database/prisma";
 import {Prisma, prisma} from "../database/prisma";
 import {requireCurrentUser} from "./auth";
+import {apiError} from "./api-error";
 
 // Workshop 通用查询 / 映射 / 权限 helpers，供 server/api/v1 各路由复用。
 
@@ -121,7 +122,7 @@ export function buildPage<T>(items: T[], total: number, offset: number, limit: n
 export async function requireAdmin(event: H3Event): Promise<User> {
     const user = await requireCurrentUser(event);
     if (user.role !== "admin") {
-        throw createError({statusCode: 403, message: "需要管理员权限"});
+        throw apiError(403, "forbidden", "Administrator access required");
     }
     return user;
 }
@@ -132,7 +133,7 @@ export async function requireAdmin(event: H3Event): Promise<User> {
 export function requireSlugParam(event: H3Event): string {
     const slug = getRouterParam(event, "slug");
     if (!slug) {
-        throw createError({statusCode: 400, message: "缺少 slug 参数"});
+        throw apiError(400, "validation_failed", "Missing slug parameter");
     }
     return slug;
 }
@@ -143,7 +144,7 @@ export function requireSlugParam(event: H3Event): string {
 export function requireIdParam(event: H3Event): number {
     const id = Number.parseInt(getRouterParam(event, "id") ?? "", 10);
     if (!Number.isSafeInteger(id) || id <= 0) {
-        throw createError({statusCode: 400, message: "id 参数无效"});
+        throw apiError(400, "validation_failed", "Invalid id parameter");
     }
     return id;
 }
@@ -154,7 +155,7 @@ export function requireIdParam(event: H3Event): number {
 export async function requirePublishedItem(slug: string): Promise<ItemWithRefs> {
     const item = await prisma.workshopItem.findUnique({where: {slug}, include: itemDtoInclude});
     if (!item || item.status !== "published" || item.versions.length === 0) {
-        throw createError({statusCode: 404, message: "条目不存在"});
+        throw apiError(404, "item_not_found", "Item not found");
     }
     return item;
 }
@@ -166,7 +167,7 @@ export async function requirePublishedItem(slug: string): Promise<ItemWithRefs> 
 export async function requireItemBySlug(slug: string): Promise<ItemWithRefs> {
     const item = await prisma.workshopItem.findUnique({where: {slug}, include: itemDtoInclude});
     if (!item) {
-        throw createError({statusCode: 404, message: "条目不存在"});
+        throw apiError(404, "item_not_found", "Item not found");
     }
     return item;
 }
@@ -179,10 +180,10 @@ export async function requireOwnedItem(event: H3Event, slug: string, user?: User
     const owner = user ?? (await requireCurrentUser(event));
     const item = await prisma.workshopItem.findUnique({where: {slug}, include: itemDtoInclude});
     if (!item) {
-        throw createError({statusCode: 404, message: "条目不存在"});
+        throw apiError(404, "item_not_found", "Item not found");
     }
     if (item.authorId !== owner.id) {
-        throw createError({statusCode: 403, message: "只有作者本人可以操作该条目"});
+        throw apiError(403, "item_owner_required", "Only the author can modify this item");
     }
     return {user: owner, item};
 }
@@ -196,7 +197,7 @@ export async function resolveItemVersion(item: ItemWithRefs, versionNumber?: str
         ? await prisma.itemVersion.findUnique({where: {itemId_version: {itemId: item.id, version: versionNumber}}})
         : (item.versions[0] ?? null);
     if (!version) {
-        throw createError({statusCode: 404, message: versionNumber ? "指定版本不存在" : "该条目还没有任何版本"});
+        throw apiError(404, versionNumber ? "item_version_not_found" : "item_version_missing", versionNumber ? "Item version not found" : "Item has no versions");
     }
     return version;
 }

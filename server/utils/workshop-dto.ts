@@ -1,11 +1,13 @@
 import type {H3Event} from "h3";
-import {createError, getQuery} from "h3";
+import {getQuery} from "h3";
 import {z} from "zod";
 import {
     AGENT_ASSET_TYPES,
     AgentAssetSemVerSchema,
 } from "../../shared/agent-asset-package";
 import type {AgentAssetPackageJson} from "../../shared/agent-asset-package";
+import {normalizeValidationIssues} from "../../shared/validation-issues";
+import {apiError} from "./api-error";
 
 // Workshop 请求校验 schema。输出 DTO 纯类型见 shared/dto/workshop.dto.ts。
 
@@ -110,9 +112,8 @@ export const UploadVersionFieldsSchema = z.object({
 export function validateQuery<T>(event: H3Event, schema: z.ZodType<T>): T {
     const result = schema.safeParse(getQuery(event));
     if (!result.success) {
-        throw createError({
-            statusCode: 400,
-            message: result.error.issues.map((issue) => issue.message).join("；") || "查询参数无效",
+        throw apiError(400, "validation_failed", "Query validation failed", {
+            issues: normalizeValidationIssues(result.error.issues),
         });
     }
     return result.data;

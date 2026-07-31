@@ -3,6 +3,7 @@ import {prisma} from "../../../../../database/prisma";
 import {itemDtoInclude, requireAdmin, requireIdParam, toItemDto} from "../../../../../utils/workshop";
 import {AdminItemFeaturedRequestSchema} from "../../../../../utils/workshop-dto";
 import {validateBody} from "../../../../../utils/dto";
+import {apiError} from "../../../../../utils/api-error";
 
 /**
  * admin 设置 / 取消条目精选：featured 条目进入首页「编辑推荐」分区。
@@ -14,7 +15,7 @@ export default defineEventHandler(async (event): Promise<WorkshopItemDto> => {
 
     const item = await prisma.workshopItem.findUnique({where: {id}, select: {id: true}});
     if (!item) {
-        throw createError({statusCode: 404, message: "条目不存在"});
+        throw apiError(404, "item_not_found", "Item not found");
     }
 
     const updated = await prisma.workshopItem.update({

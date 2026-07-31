@@ -64,8 +64,11 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{(event: "change", state: PackageWorkbenchState): void}>();
 const notification = useNotification();
+const {locale, t} = useI18n();
+const {formatBytes, formatNumber} = useLocaleFormat();
+const {describeIssues} = useDraftIssueMessage();
 
-const draft = ref<PackageDraft>(createPackageDraft(props.initialType, props.initialName, props.initialVersion));
+const draft = ref<PackageDraft>(createPackageDraft(props.initialType, props.initialName, props.initialVersion, locale.value === "en-US" ? "en-US" : "zh-CN"));
 const dirty = ref(false);
 const selectedId = ref<string | null>("package.json");
 const expandedIds = ref<string[]>([]);
@@ -112,7 +115,7 @@ function publishState(): void {
     const result = parseDraftPackage(draft.value);
     const revision = ++validationRevision;
     if (!result.ok) {
-        emit("change", {draft: draft.value, packageJson: null, error: result.error, validating: false, dirty: dirty.value});
+        emit("change", {draft: draft.value, packageJson: null, error: describeIssues(result.issues), validating: false, dirty: dirty.value});
         return;
     }
     emit("change", {
@@ -129,7 +132,7 @@ function publishState(): void {
         emit("change", {
             draft: draft.value,
             packageJson: validated.ok ? validated.packageJson : result.packageJson,
-            error: validated.ok ? "" : validated.error,
+            error: validated.ok ? "" : describeIssues(validated.issues),
             validating: false,
             dirty: dirty.value,
         });
@@ -150,7 +153,7 @@ async function initialize(): Promise<void> {
                 }
             }
         } else {
-            localError.value = imported.error;
+            localError.value = describeIssues(imported.issues);
         }
     }
     expandedIds.value = draft.value.entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path);
@@ -192,13 +195,13 @@ function openEntryDialog(action: "file" | "directory" | "rename"): void {
 function applyEntryDialog(): void {
     const name = entryName.value.trim();
     if (!name) {
-        entryError.value = "名称不能为空";
+        entryError.value = t("workbench.nameRequired");
         return;
     }
     let result: ReturnType<typeof addDraftEntry> | ReturnType<typeof renameDraftEntry>;
     if (entryAction.value === "rename") {
         if (!selectedEntry.value || selectedEntry.value.path === "package.json") {
-            entryError.value = "根 package.json 不能重命名";
+            entryError.value = t("workbench.packageRenameForbidden");
             return;
         }
         result = renameDraftEntry(draft.value, selectedEntry.value.path, name);
@@ -210,7 +213,7 @@ function applyEntryDialog(): void {
         result = addDraftEntry(draft.value, {path, kind: entryAction.value, bytes: new Uint8Array()});
     }
     if (!result.ok) {
-        entryError.value = result.error;
+        entryError.value = describeIssues(result.issues);
         return;
     }
     commit(result.draft);
@@ -226,7 +229,7 @@ function removeSelected(): void {
     if (!entry || entry.path === "package.json") {
         return;
     }
-    if (!window.confirm(`确认删除 ${entry.path}${entry.kind === "directory" ? " 及其全部内容" : ""}？`)) {
+    if (!window.confirm(t(entry.kind === "directory" ? "workbench.deleteDirectoryConfirm" : "workbench.deleteFileConfirm", {path: entry.path}))) {
         return;
     }
     commit(deleteDraftEntry(draft.value, entry.path));
@@ -237,7 +240,7 @@ function removeSelected(): void {
 function moveEntry(move: FileTreeMove): void {
     const result = moveDraftEntry(draft.value, move);
     if (!result.ok) {
-        notification.error(result.error);
+        notification.error(describeIssues(result.issues));
         return;
     }
     commit(result.draft);
@@ -252,7 +255,7 @@ async function setPackageName(value: string): Promise<void> {
         return;
     }
     if (!result.ok) {
-        localError.value = result.error;
+        localError.value = describeIssues(result.issues);
         return;
     }
     commit(result.draft);
@@ -283,36 +286,36 @@ function changeType(value: SegmentedControlValue): void {
     if (packageJson.value?.neurobook.assetType === assetType) {
         return;
     }
-    if (dirty.value && !window.confirm("切换资产类型会重建包模板并丢弃当前文件，是否继续？")) {
+    if (dirty.value && !window.confirm(t("workbench.changeTypeConfirm"))) {
         return;
     }
     const name = packageJson.value?.name ?? props.initialName;
     const version = packageJson.value?.version ?? props.initialVersion;
     selectedId.value = "package.json";
     expandedIds.value = [];
-    commit(createPackageDraft(assetType, name, version));
+    commit(createPackageDraft(assetType, name, version, locale.value === "en-US" ? "en-US" : "zh-CN"));
 }
 
 /** 将目录选择或拖入的多个文件合并到草稿，并对覆盖做一次确认。 */
 async function importFiles(files: File[]): Promise<void> {
     const imported = await draftEntriesFromFiles(files);
     if (!imported.ok) {
-        localError.value = imported.error;
+        localError.value = describeIssues(imported.issues);
         return;
     }
     let merged = mergeDraftEntries(draft.value, imported.entries, false);
     if (!merged.ok) {
-        localError.value = merged.error;
+        localError.value = describeIssues(merged.issues);
         return;
     }
     if (merged.conflicts.length > 0) {
-        if (!window.confirm(`将覆盖 ${merged.conflicts.length} 个同名文件，是否继续？`)) {
+        if (!window.confirm(t("workbench.overwriteFilesConfirm", {count: formatNumber(merged.conflicts.length)}))) {
             return;
         }
         merged = mergeDraftEntries(draft.value, imported.entries, true);
     }
     if (!merged.ok) {
-        localError.value = merged.error;
+        localError.value = describeIssues(merged.issues);
         return;
     }
     commit(merged.draft);
@@ -322,22 +325,22 @@ async function importFiles(files: File[]): Promise<void> {
 async function importDirectoryZip(file: File): Promise<void> {
     const imported = await draftFromZip(file, true);
     if (!imported.ok) {
-        localError.value = imported.error;
+        localError.value = describeIssues(imported.issues);
         return;
     }
     let merged = mergeDraftEntries(draft.value, imported.draft.entries, false);
     if (!merged.ok) {
-        localError.value = merged.error;
+        localError.value = describeIssues(merged.issues);
         return;
     }
     if (merged.conflicts.length > 0) {
-        if (!window.confirm(`目录 ZIP 将覆盖 ${merged.conflicts.length} 个同名条目，是否继续？`)) {
+        if (!window.confirm(t("workbench.overwriteZipConfirm", {count: formatNumber(merged.conflicts.length)}))) {
             return;
         }
         merged = mergeDraftEntries(draft.value, imported.draft.entries, true);
     }
     if (!merged.ok) {
-        localError.value = merged.error;
+        localError.value = describeIssues(merged.issues);
         return;
     }
     commit(merged.draft);
@@ -347,15 +350,15 @@ async function importDirectoryZip(file: File): Promise<void> {
 async function importPackageZip(file: File): Promise<void> {
     const imported = await draftFromZip(file);
     if (!imported.ok) {
-        localError.value = imported.error;
+        localError.value = describeIssues(imported.issues);
         return;
     }
     const validated = await validateDraftPackage(imported.draft, validationExpectation.value);
     if (!validated.ok) {
-        localError.value = validated.error;
+        localError.value = describeIssues(validated.issues);
         return;
     }
-    if (dirty.value && !window.confirm("导入完整包会替换当前草稿，是否继续？")) {
+    if (dirty.value && !window.confirm(t("workbench.replacePackageConfirm"))) {
         return;
     }
     commit(imported.draft);
@@ -367,7 +370,7 @@ async function importPackageZip(file: File): Promise<void> {
 async function exportPackage(): Promise<void> {
     const result = await buildDraftZip(draft.value, packageJson.value?.name ?? "agent-asset", validationExpectation.value);
     if (!result.ok) {
-        localError.value = result.error;
+        localError.value = describeIssues(result.issues);
         return;
     }
     const url = URL.createObjectURL(result.file);
@@ -409,7 +412,7 @@ async function handleDrop(event: DragEvent): Promise<void> {
     const located = (await Promise.all(roots.map((entry) => readBrowserEntry(entry)))).flat();
     if (located.length > AGENT_ASSET_LIMITS.entries
         || located.reduce((total, item) => total + item.file.size, 0) > AGENT_ASSET_LIMITS.uncompressedBytes) {
-        localError.value = "拖入内容超过 500 个文件或 100 MiB 上限";
+        localError.value = t("workbench.dropLimit");
         return;
     }
     const entries: DraftEntry[] = [];
@@ -418,16 +421,16 @@ async function handleDrop(event: DragEvent): Promise<void> {
     }
     let merged = mergeDraftEntries(draft.value, entries, false);
     if (!merged.ok) {
-        localError.value = merged.error;
+        localError.value = describeIssues(merged.issues);
         return;
     }
-    if (merged.conflicts.length > 0 && window.confirm(`将覆盖 ${merged.conflicts.length} 个同名文件，是否继续？`)) {
+    if (merged.conflicts.length > 0 && window.confirm(t("workbench.overwriteFilesConfirm", {count: formatNumber(merged.conflicts.length)}))) {
         merged = mergeDraftEntries(draft.value, entries, true);
     } else if (merged.conflicts.length > 0) {
         return;
     }
     if (!merged.ok) {
-        localError.value = merged.error;
+        localError.value = describeIssues(merged.issues);
         return;
     }
     commit(merged.draft);
@@ -440,15 +443,15 @@ onMounted(() => void initialize());
     <!-- 资产包工作台：左侧文件树，右侧结构化协议与内容编辑。 -->
     <div class="flex min-h-[36rem] flex-col overflow-hidden rounded-md border border-[var(--border-color)] bg-[var(--bg-panel)]">
         <div class="flex flex-wrap items-center gap-2 border-b border-[var(--border-color)] px-3 py-2">
-            <Button size="sm" variant="secondary" @click="openEntryDialog('file')"><span class="i-lucide-file-plus h-4 w-4"></span>新建文件</Button>
-            <Button size="sm" variant="secondary" @click="openEntryDialog('directory')"><span class="i-lucide-folder-plus h-4 w-4"></span>新建目录</Button>
-            <Button size="sm" variant="subtle" :disabled="!selectedEntry || selectedEntry.path === 'package.json'" @click="openEntryDialog('rename')"><span class="i-lucide-pencil h-4 w-4"></span>重命名</Button>
-            <Button size="sm" variant="subtle" :disabled="!selectedEntry || selectedEntry.path === 'package.json'" @click="removeSelected"><span class="i-lucide-trash-2 h-4 w-4"></span>删除</Button>
+            <Button size="sm" variant="secondary" @click="openEntryDialog('file')"><span class="i-lucide-file-plus h-4 w-4"></span>{{ t("workbench.newFile") }}</Button>
+            <Button size="sm" variant="secondary" @click="openEntryDialog('directory')"><span class="i-lucide-folder-plus h-4 w-4"></span>{{ t("workbench.newDirectory") }}</Button>
+            <Button size="sm" variant="subtle" :disabled="!selectedEntry || selectedEntry.path === 'package.json'" @click="openEntryDialog('rename')"><span class="i-lucide-pencil h-4 w-4"></span>{{ t("workbench.rename") }}</Button>
+            <Button size="sm" variant="subtle" :disabled="!selectedEntry || selectedEntry.path === 'package.json'" @click="removeSelected"><span class="i-lucide-trash-2 h-4 w-4"></span>{{ t("common.delete") }}</Button>
             <span class="hidden h-5 w-px bg-[var(--border-color)] sm:block"></span>
-            <Button size="sm" variant="secondary" @click="directoryInput?.click()"><span class="i-lucide-folder-input h-4 w-4"></span>导入目录</Button>
-            <Button size="sm" variant="secondary" @click="directoryZipInput?.click()"><span class="i-lucide-file-archive h-4 w-4"></span>目录 ZIP</Button>
-            <Button size="sm" variant="secondary" @click="packageZipInput?.click()"><span class="i-lucide-package-open h-4 w-4"></span>完整包</Button>
-            <Button size="sm" variant="subtle" class="sm:ml-auto" @click="exportPackage"><span class="i-lucide-download h-4 w-4"></span>导出包</Button>
+            <Button size="sm" variant="secondary" @click="directoryInput?.click()"><span class="i-lucide-folder-input h-4 w-4"></span>{{ t("workbench.importDirectory") }}</Button>
+            <Button size="sm" variant="secondary" @click="directoryZipInput?.click()"><span class="i-lucide-file-archive h-4 w-4"></span>{{ t("workbench.directoryZip") }}</Button>
+            <Button size="sm" variant="secondary" @click="packageZipInput?.click()"><span class="i-lucide-package-open h-4 w-4"></span>{{ t("workbench.completePackage") }}</Button>
+            <Button size="sm" variant="subtle" class="sm:ml-auto" @click="exportPackage"><span class="i-lucide-download h-4 w-4"></span>{{ t("workbench.exportPackage") }}</Button>
             <input ref="directoryInput" type="file" multiple webkitdirectory class="hidden" @change="importFiles([...($event.target as HTMLInputElement).files ?? []])" />
             <input ref="directoryZipInput" type="file" accept=".zip,application/zip" class="hidden" @change="($event.target as HTMLInputElement).files?.[0] && importDirectoryZip(($event.target as HTMLInputElement).files![0]!)" />
             <input ref="packageZipInput" type="file" accept=".zip,application/zip" class="hidden" @change="($event.target as HTMLInputElement).files?.[0] && importPackageZip(($event.target as HTMLInputElement).files![0]!)" />
@@ -462,7 +465,7 @@ onMounted(() => void initialize());
                     :selected-id="selectedId"
                     :expanded-ids="expandedIds"
                     draggable
-                    aria-label="资产包文件"
+                    :aria-label="t('workbench.fileTree')"
                     @update:expanded-ids="expandedIds = $event"
                     @select="selectNode"
                     @activate="activateNode"
@@ -473,13 +476,13 @@ onMounted(() => void initialize());
             <!-- 编辑区 -->
             <section class="flex min-w-0 flex-col overflow-auto p-4">
                 <div v-if="selectedEntry?.path === 'package.json' && packageJson" class="mb-4 grid grid-cols-1 gap-3 border-b border-[var(--border-color)] pb-4 lg:grid-cols-2">
-                    <FormField label="资产类型">
-                        <SegmentedControl :model-value="packageJson.neurobook.assetType" :options="typeOptions" aria-label="资产类型" @update:model-value="changeType" />
+                    <FormField :label="t('workbench.assetType')">
+                        <SegmentedControl :model-value="packageJson.neurobook.assetType" :options="typeOptions" :aria-label="t('workbench.assetType')" @update:model-value="changeType" />
                     </FormField>
-                    <FormField label="安装名" :description="packageJson.neurobook.assetType === 'profile' ? '小写点分 key；每段可使用连字符，Profile 入口会同步重命名。' : 'kebab-case；固定入口会同步重命名。'">
+                    <FormField :label="t('workbench.installName')" :description="packageJson.neurobook.assetType === 'profile' ? t('workbench.profileNameDescription') : t('workbench.packageNameDescription')">
                         <FormInput :model-value="packageJson.name" @update:model-value="setPackageName" />
                     </FormField>
-                    <FormField label="版本" description="使用 SemVer。">
+                    <FormField :label="t('workbench.version')" :description="t('workbench.versionDescription')">
                         <div class="flex flex-wrap gap-2">
                             <FormInput class="min-w-36 flex-1" :model-value="packageJson.version" @update:model-value="setPackageVersion" />
                             <Button size="sm" variant="secondary" @click="bumpVersion('patch')">patch</Button>
@@ -487,14 +490,14 @@ onMounted(() => void initialize());
                             <Button size="sm" variant="secondary" @click="bumpVersion('major')">major</Button>
                         </div>
                     </FormField>
-                    <FormField label="最低 NeuroBook 版本" description="可选 SemVer。">
+                    <FormField :label="t('workbench.minVersion')" :description="t('workbench.minVersionDescription')">
                         <FormInput :model-value="packageJson.neurobook.minAppVersion ?? ''" placeholder="0.8.0" @update:model-value="commit(updateDraftPackage(draft, {minAppVersion: $event.trim()}))" />
                     </FormField>
                 </div>
 
                 <div v-if="executable" class="mb-3 flex items-start gap-2 rounded-md border border-[var(--status-warning)] bg-[var(--bg-subtle)] px-3 py-2 text-sm text-[var(--text-secondary)]">
                     <span class="i-lucide-shield-alert mt-0.5 h-4 w-4 shrink-0 text-[var(--status-warning)]"></span>
-                    <span>这个资产包含会在用户设备上运行的代码。发布前请确认所有脚本、依赖和入口内容。</span>
+                    <span>{{ t("workbench.executableWarning") }}</span>
                 </div>
 
                 <template v-if="selectedEntry?.kind === 'file'">
@@ -512,19 +515,19 @@ onMounted(() => void initialize());
                     />
                     <div v-else class="flex min-h-56 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-[var(--border-color)] text-[var(--text-muted)]">
                         <span class="i-lucide-file h-8 w-8"></span>
-                        <p class="text-sm">二进制文件仅保留，不提供在线编辑</p>
+                        <p class="text-sm">{{ t("workbench.binaryOnly") }}</p>
                     </div>
                 </template>
-                <div v-else-if="selectedEntry?.kind === 'directory'" class="flex min-h-56 items-center justify-center text-sm text-[var(--text-muted)]">已选择目录 {{ selectedEntry.path }}</div>
-                <div v-else class="flex min-h-56 items-center justify-center text-sm text-[var(--text-muted)]">从左侧选择文件</div>
+                <div v-else-if="selectedEntry?.kind === 'directory'" class="flex min-h-56 items-center justify-center text-sm text-[var(--text-muted)]">{{ t("workbench.directorySelected", {path: selectedEntry.path}) }}</div>
+                <div v-else class="flex min-h-56 items-center justify-center text-sm text-[var(--text-muted)]">{{ t("workbench.selectFile") }}</div>
 
-                <p v-if="localError || !parsed.ok" class="mt-3 text-sm text-[var(--status-danger)]">{{ localError || (!parsed.ok ? parsed.error : '') }}</p>
-                <p class="mt-2 text-xs text-[var(--text-muted)]">{{ draft.entries.length }} 个条目 · 草稿仅保存在当前页面</p>
+                <p v-if="localError || !parsed.ok" class="mt-3 text-sm text-[var(--status-danger)]">{{ localError || (!parsed.ok ? describeIssues(parsed.issues) : '') }}</p>
+                <p class="mt-2 text-xs text-[var(--text-muted)]">{{ t("workbench.draftSummary", {count: formatNumber(draft.entries.length)}) }}</p>
             </section>
         </div>
 
-        <Dialog v-model="entryDialog" :title="entryAction === 'rename' ? '重命名' : entryAction === 'file' ? '新建文件' : '新建目录'" size="sm" show-cancel confirm-label="确定" @confirm="applyEntryDialog">
-            <FormField label="名称" required>
+        <Dialog v-model="entryDialog" :title="entryAction === 'rename' ? t('workbench.rename') : entryAction === 'file' ? t('workbench.newFile') : t('workbench.newDirectory')" size="sm" show-cancel :confirm-label="t('common.confirm')" @confirm="applyEntryDialog">
+            <FormField :label="t('workbench.name')" required>
                 <FormInput v-model="entryName" autofocus @keydown.enter="applyEntryDialog" />
             </FormField>
             <p v-if="entryError" class="mt-2 text-sm text-[var(--status-danger)]">{{ entryError }}</p>

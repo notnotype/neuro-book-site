@@ -2,6 +2,7 @@ import {prisma} from "../../../../database/prisma";
 import {requireCurrentUser} from "../../../../utils/auth";
 import {revokeAuthorizationChain} from "../../../../utils/passport";
 import {requireIdParam} from "../../../../utils/workshop";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * 吊销实例授权（spec §8，cookie session 专属）：整条 token 链立即失效。
@@ -13,7 +14,7 @@ export default defineEventHandler(async (event): Promise<{ok: true}> => {
 
     const authorization = await prisma.passportAuthorization.findFirst({where: {id, userId: user.id}});
     if (!authorization) {
-        throw createError({statusCode: 404, message: "授权不存在"});
+        throw apiError(404, "authorization_not_found", "Authorization not found");
     }
     await revokeAuthorizationChain(authorization.id);
     return {ok: true};

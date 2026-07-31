@@ -1,6 +1,6 @@
 # NeuroBook Passport 与官方站点 API v1
 
-> 状态：**已实施（2026-07-22，Task 112 A/B/C 三阶段 + Task 119 账号第二轮；2026-07-27 扩订注册码/邀请码合同；浏览器验收待做）**。
+> 状态：**已实施（2026-07-22，Task 112 A/B/C 三阶段 + Task 119 账号第二轮；2026-07-27 扩订注册码/邀请码合同；2026-07-31 扩订账号名称与 Web 错误合同）**。
 > 本文件是 Passport / 官方站点接口的唯一真相源。服务端（neuro-book-site）与实例客户端（neuro-book 仓）都以此为准；改动接口必须先改本文件。
 > 产品讨论与实施 walkthrough 见 neuro-book 仓 `docs/tasks/112-passport-official-site/README.md`。
 
@@ -47,7 +47,8 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 
 - Base path：新端点全部在 `/api/v1/` 下；破坏性变更升 `/api/v2/`。
 - DTO 字段 camelCase，zod 校验（沿用现有 `shared/` DTO 模式）。
-- 错误格式：沿用站点现有 `createError` 结构；**token 端点例外**，其业务错误经 `data.error` 携带 OAuth 风格错误码（`authorization_pending` 等，见 §6.4），便于客户端状态机分支。
+- 错误格式：所有业务错误以 `data.error` 返回稳定机器码。Web 参数错误固定为 `validation_failed`，并附不包含输入值和 Zod 原始 message 的 `issues: [{ path, code, minimum?, maximum? }]`；可归属单个字段的业务错误可附 `field`。Web 前端只按错误码本地化，不展示服务端 `message`。**token 端点例外**仅指它继续使用 RFC 8628 风格的既有业务码（`authorization_pending` 等，见 §6.4）。
+- 未知 5xx 的 Web 界面显示统一本地化提示，并可附响应 `X-Request-ID` 供日志对账；服务端 message、stack、请求 body 和凭据不得回显。
 - 时间一律 ISO 8601 UTC 字符串。
 - 限流：设备码申请按 IP 限频；token 轮询必须遵守 `interval`，过快返回 `slow_down`。账号面（2026-07-22 第二轮起为正式合同，进程内固定窗口，超限 429，额度 env 可覆写供测试）：登录 10 次 / 5 分钟 / IP+用户名（`NB_LOGIN_RATE_LIMIT`；键上用户名防误伤共享出口，撒网式换名爆破由注册码准入门禁兜底）；注册（含 OAuth 补全注册，共享额度）5 次 / 小时 / IP（`NB_REGISTER_RATE_LIMIT`）；修改密码 5 次 / 小时 / 用户（`NB_PASSWORD_RATE_LIMIT`）。
 
@@ -59,7 +60,7 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 
 | 端点 | 说明 |
 | --- | --- |
-| `POST /api/auth/register` | `{ username, password, registrationCode, inviteCode? }`。注册码必填并负责准入；邀请码可选，只记录邀请归属。两类码与用户创建在同一事务内消费。 |
+| `POST /api/auth/register` | `{ username, displayName, password, registrationCode, inviteCode? }`。注册码必填并负责准入；邀请码可选，只记录邀请归属。两类码与用户创建在同一事务内消费。 |
 | `POST /api/auth/login` / `POST /api/auth/logout` | cookie session。密码为空的 OAuth 免密账号走统一「用户名或密码错误」401，不泄露账号存在性。 |
 | `GET /api/auth/me` | 当前会话账号。 |
 
@@ -84,6 +85,13 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 
 注册码与邀请码都采用原子条件更新消费。有限次数不会被并发注册穿透；任一可选邀请码无效时，整个注册事务回滚，注册码使用次数也不增加。分享链接使用 `/register?registrationCode=...&inviteCode=...`，可只带其中一个参数，但提交注册时仍必须有有效注册码。
 
+账号名称合同：
+
+- `username` 是不可修改的登录账号名，同时用于个人主页 URL 和作者引用。trim 后必须为 3–32 位 `[A-Za-z0-9_-]`，不接受中文。
+- `displayName` 是公开显示名称。trim 后为 1–50 个 Unicode 字符，允许中文，注册后仍可通过资料接口修改；注册与资料编辑共用同一 schema。
+- 普通注册页的 `confirmPassword` 只用于浏览器校验，不属于请求 DTO，也不得发送到服务端。
+- `username_taken` 附 `field: "username"`；注册码与邀请码的 invalid / disabled / expired / exhausted / conflict 错误分别附 `field: "registrationCode"` 或 `field: "inviteCode"`。
+
 ### 5.2 上游 OAuth 关联（GitHub，2026-07-22 第二轮落地）
 
 冻结原则：上游身份只能**关联**到 NeuroBook 账号（`PassportIdentity` 表，§10），不能替代它作为主键；解绑后账号照常存在。GitHub 注册**仍需注册码**，可同时填写邀请码；准入门禁对 OAuth 用户不豁免。
@@ -101,7 +109,7 @@ neuro-book-site 是 **NeuroBook 官方站点**（模块化单体）。Workshop �
 | 端点 | 说明 |
 | --- | --- |
 | `GET /api/auth/register/oauth` | 补全页读取 pending 身份：`{ provider, providerUsername, suggestedUsername, displayName, avatarUrl }`；无 pending 404。 |
-| `POST /api/auth/register/oauth` | `{ username, registrationCode, inviteCode? }`。从 session 读 pending 身份（无则 400）；事务内建账号（`passwordHash` 为空 + GitHub 头像/昵称）+ `PassportIdentity` + 消费两类码；成功写正式会话。 |
+| `POST /api/auth/register/oauth` | `{ username, displayName, registrationCode, inviteCode? }`。从 session 读 pending 身份（无则 400）；GitHub 名称只用于预填，用户可以修改显示名称；事务内建账号（`passwordHash` 为空 + GitHub 头像）+ `PassportIdentity` + 消费两类码；成功写正式会话。 |
 | `GET /api/v1/passport/identities` | 本账号已关联的上游身份列表（cookie session 专属）。 |
 | `DELETE /api/v1/passport/identities/:id` | 解绑。**守卫：账号未设密码时拒绝（400），防唯一登录方式被移除后账号失联**；先经 `POST /api/v1/me/password` 补设密码。 |
 

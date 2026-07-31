@@ -1,6 +1,7 @@
 import {prisma} from "../../../../../database/prisma";
 import {requireAccess} from "../../../../../utils/passport-guard";
 import {requireOwnedItem, requireSlugParam} from "../../../../../utils/workshop";
+import {apiError} from "../../../../../utils/api-error";
 
 /** 删除作者自己的无版本草稿；已发布过任何版本的条目不能通过此接口删除。 */
 export default defineEventHandler(async (event): Promise<void> => {
@@ -11,7 +12,7 @@ export default defineEventHandler(async (event): Promise<void> => {
         where: {id: item.id, authorId: user.id, versions: {none: {}}},
     });
     if (result.count === 0) {
-        throw createError({statusCode: 409, message: "只有尚未上传首版的草稿可以删除"});
+        throw apiError(409, "draft_delete_forbidden", "Only a draft without versions can be deleted");
     }
     setResponseStatus(event, 204);
 });

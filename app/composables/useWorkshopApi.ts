@@ -248,8 +248,8 @@ export function useWorkshopApi() {
         return await $fetch<PendingOAuthDto>("/api/auth/register/oauth");
     }
 
-    /** GitHub 补全注册（用户名 + 注册码 + 可选邀请码），成功即登录。 */
-    async function completeOAuthRegister(input: {username: string; registrationCode: string; inviteCode?: string}): Promise<AuthSessionDto> {
+    /** GitHub 补全注册（账号名 + 显示名称 + 注册码 + 可选邀请码），成功即登录。 */
+    async function completeOAuthRegister(input: {username: string; displayName: string; registrationCode: string; inviteCode?: string}): Promise<AuthSessionDto> {
         return await $fetch<AuthSessionDto>("/api/auth/register/oauth", {method: "POST", body: input});
     }
 

@@ -4,7 +4,8 @@ import {createWriteStream} from "node:fs";
 import {mkdir, rm} from "node:fs/promises";
 import {join} from "node:path";
 import type {H3Event} from "h3";
-import {createError} from "h3";
+import {normalizeValidationIssues} from "../../shared/validation-issues";
+import {apiError} from "./api-error";
 import type {UpdateItemRequest} from "./workshop-dto";
 import {UpdateItemRequestSchema, UploadVersionFieldsSchema} from "./workshop-dto";
 import {workshopTmpDir} from "./workshop-files";
@@ -36,7 +37,7 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
     const maxBytes = workshopMaxFileBytes();
     const declaredLength = Number.parseInt(String(request.headers["content-length"] ?? ""), 10);
     if (Number.isSafeInteger(declaredLength) && declaredLength > maxBytes + 64 * 1024) {
-        throw createError({statusCode: 413, message: "Workshop 压缩包超过 20 MiB 上限", data: {error: "file_too_large"}});
+        throw apiError(413, "file_too_large", "Workshop archive exceeds the file limit");
     }
 
     await mkdir(workshopTmpDir(), {recursive: true});
@@ -97,12 +98,12 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
                 }
             });
             file.on("limit", () => {
-                fail(createError({statusCode: 413, message: "Workshop 压缩包超过 20 MiB 上限", data: {error: "file_too_large"}}));
+                fail(apiError(413, "file_too_large", "Workshop archive exceeds the file limit"));
             });
             file.on("error", fail);
         });
-        parser.on("filesLimit", () => fail(createError({statusCode: 400, message: "只能上传一个 zip 文件"})));
-        parser.on("fieldsLimit", () => fail(createError({statusCode: 400, message: "multipart 字段过多"})));
+        parser.on("filesLimit", () => fail(apiError(400, "multipart_file_limit", "Only one archive can be uploaded")));
+        parser.on("fieldsLimit", () => fail(apiError(400, "multipart_field_limit", "Too many multipart fields")));
         parser.on("error", fail);
         request.on("error", fail);
         parser.on("close", () => {
@@ -114,16 +115,18 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
                     return;
                 }
                 if (!fileSeen) {
-                    fail(createError({statusCode: 400, message: "缺少 zip 文件字段 file"}));
+                    fail(apiError(400, "multipart_file_required", "Missing multipart file field"));
                     return;
                 }
                 if (!fileName.toLowerCase().endsWith(".zip")) {
-                    fail(createError({statusCode: 400, message: "Workshop 文件必须是 .zip"}));
+                    fail(apiError(400, "invalid_archive_format", "Workshop archive must be a ZIP file"));
                     return;
                 }
                 const fields = UploadVersionFieldsSchema.safeParse({changelog, ...(metadata ? {metadata} : {})});
                 if (!fields.success) {
-                    fail(createError({statusCode: 400, message: fields.error.issues.map((issue) => issue.message).join("；")}));
+                    fail(apiError(400, "validation_failed", "Multipart fields validation failed", {
+                        issues: normalizeValidationIssues(fields.error.issues),
+                    }));
                     return;
                 }
                 let parsedMetadata: UpdateItemRequest | undefined;
@@ -132,12 +135,14 @@ export async function parseWorkshopUpload(event: H3Event): Promise<ParsedWorksho
                         const raw: unknown = JSON.parse(fields.data.metadata);
                         const result = UpdateItemRequestSchema.safeParse(raw);
                         if (!result.success) {
-                            fail(createError({statusCode: 400, message: result.error.issues.map((issue) => issue.message).join("；")}));
+                            fail(apiError(400, "validation_failed", "Item metadata validation failed", {
+                                issues: normalizeValidationIssues(result.error.issues),
+                            }));
                             return;
                         }
                         parsedMetadata = result.data;
                     } catch {
-                        fail(createError({statusCode: 400, message: "metadata 必须是合法 JSON"}));
+                        fail(apiError(400, "invalid_metadata_json", "Metadata is not valid JSON"));
                         return;
                     }
                 }

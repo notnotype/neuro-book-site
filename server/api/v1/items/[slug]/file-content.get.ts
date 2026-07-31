@@ -3,6 +3,7 @@ import {requirePublishedItem, requireSlugParam, resolveItemVersion} from "../../
 import {versionZipPath} from "../../../../utils/workshop-files";
 import {isPreviewableFile, readPackageEntry} from "../../../../utils/workshop-package";
 import {PackageFileContentQuerySchema, validateQuery} from "../../../../utils/workshop-dto";
+import {apiError} from "../../../../utils/api-error";
 
 /**
  * 包内文本文件内容（在线预览）：path 按归一化条目名精确匹配（无路径穿越），只解压目标条目；
@@ -16,20 +17,20 @@ export default defineEventHandler(async (event): Promise<PackageFileContentDto> 
 
     const data = await readPackageEntry(versionZipPath(item.id, version.ordinal), query.path);
     if (!data) {
-        throw createError({statusCode: 404, message: "包内不存在该文件"});
+        throw apiError(404, "package_file_not_found", "Package file not found");
     }
     if (!isPreviewableFile(query.path, data.byteLength)) {
-        throw createError({statusCode: 400, message: "该文件是二进制或超过预览大小上限，不支持在线预览"});
+        throw apiError(400, "file_preview_unsupported", "File cannot be previewed");
     }
 
     let content: string;
     try {
         content = new TextDecoder("utf-8", {fatal: true}).decode(data);
     } catch {
-        throw createError({statusCode: 400, message: "该文件不是合法 UTF-8 文本，不支持在线预览"});
+        throw apiError(400, "file_preview_unsupported", "File is not valid UTF-8");
     }
     if (content.includes("\0")) {
-        throw createError({statusCode: 400, message: "该文件是二进制内容，不支持在线预览"});
+        throw apiError(400, "file_preview_unsupported", "Binary file cannot be previewed");
     }
     return {path: query.path, size: data.byteLength, content};
 });

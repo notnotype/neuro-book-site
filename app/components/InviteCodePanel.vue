@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue";
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {InviteCodeDto} from "../../shared/dto/access-code.dto";
 
 const api = useWorkshopApi();
 const notification = useNotification();
+const localizedError = useLocalizedApiError();
+const {t} = useI18n();
+const {formatDate, formatNumber} = useLocaleFormat();
 
 const note = ref("");
 const limitMode = ref<"unlimited" | "limited">("unlimited");
@@ -53,15 +55,15 @@ function codeStatus(code: InviteCodeDto): "active" | "disabled" | "expired" | "e
 }
 
 function statusText(code: InviteCodeDto): string {
-    return {active: "可用", disabled: "已停用", expired: "已过期", exhausted: "已用完"}[codeStatus(code)];
+    return t(`accessCode.${codeStatus(code)}`);
 }
 
 async function copyText(text: string): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);
-        notification.success("已复制");
+        notification.success(t("common.copySucceeded"));
     } catch {
-        notification.error("复制失败，请手动选择");
+        notification.error(t("common.copyFailed"));
     }
 }
 
@@ -82,7 +84,7 @@ async function load(): Promise<void> {
     try {
         codes.value = await api.listMyInviteCodes();
     } catch (error) {
-        errorMsg.value = resolveApiErrorMessage(error, "加载失败");
+        errorMsg.value = localizedError.resolve(error, "common.loadFailed");
     } finally {
         loading.value = false;
     }
@@ -97,9 +99,9 @@ async function createCode(): Promise<void> {
             expiresAt: expirationIso(expiresAt.value),
         });
         codes.value = [created, ...codes.value];
-        notification.success("邀请码已创建");
+        notification.success(t("accessCode.inviteCreated"));
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "创建失败"));
+        notification.error(localizedError.resolve(error, "common.createFailed"));
     } finally {
         creating.value = false;
     }
@@ -128,9 +130,9 @@ async function saveEdit(): Promise<void> {
         });
         codes.value = codes.value.map((code) => code.id === updated.id ? updated : code);
         editing.value = null;
-        notification.success("邀请码设置已保存");
+        notification.success(t("accessCode.inviteSaved"));
     } catch (error) {
-        editError.value = resolveApiErrorMessage(error, "保存失败");
+        editError.value = localizedError.resolve(error, "common.saveFailed");
     } finally {
         editBusy.value = false;
     }
@@ -140,9 +142,9 @@ async function toggleDisabled(code: InviteCodeDto): Promise<void> {
     try {
         const updated = await api.updateMyInviteCode(code.id, {disabled: !code.disabledAt});
         codes.value = codes.value.map((item) => item.id === updated.id ? updated : item);
-        notification.success(updated.disabledAt ? "邀请码已停用" : "邀请码已启用");
+        notification.success(updated.disabledAt ? t("accessCode.inviteDisabled") : t("accessCode.inviteEnabled"));
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "操作失败"));
+        notification.error(localizedError.resolve(error, "common.actionFailed"));
     }
 }
 
@@ -153,43 +155,43 @@ onMounted(load);
     <div class="flex flex-col gap-4">
         <!-- 邀请码创建 -->
         <Panel class="flex flex-col gap-3">
-            <h2 class="text-sm font-medium text-[var(--text-main)]">创建邀请码</h2>
+            <h2 class="text-sm font-medium text-[var(--text-main)]">{{ t("accessCode.createInvite") }}</h2>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <FormField label="使用次数"><select v-model="limitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">不限次数</option><option value="limited">限制次数</option></select></FormField>
-                <FormField v-if="limitMode === 'limited'" label="最多使用"><FormNumberInput v-model="maxUses" :min="1" :max="100000" /></FormField>
-                <FormField label="过期时间"><FormInput v-model="expiresAt" type="datetime-local" /></FormField>
-                <FormField label="备注"><FormInput v-model="note" :maxlength="120" /></FormField>
+                <FormField :label="t('accessCode.useLimit')"><select v-model="limitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">{{ t("accessCode.unlimitedUses") }}</option><option value="limited">{{ t("accessCode.limitedUses") }}</option></select></FormField>
+                <FormField v-if="limitMode === 'limited'" :label="t('accessCode.maxUses')"><FormNumberInput v-model="maxUses" :min="1" :max="100000" /></FormField>
+                <FormField :label="t('accessCode.expiresAt')"><FormInput v-model="expiresAt" type="datetime-local" /></FormField>
+                <FormField :label="t('accessCode.note')"><FormInput v-model="note" :maxlength="120" /></FormField>
             </div>
-            <Button class="self-start" :loading="creating" @click="createCode"><span class="i-lucide-user-plus h-4 w-4"></span>创建</Button>
+            <Button class="self-start" :loading="creating" @click="createCode"><span class="i-lucide-user-plus h-4 w-4"></span>{{ t("accessCode.create") }}</Button>
         </Panel>
 
         <!-- 分享链接附加注册码 -->
         <Panel class="flex flex-col gap-2">
-            <h2 class="text-sm font-medium text-[var(--text-main)]">分享链接</h2>
-            <FormField label="附带注册码（可选）"><FormInput v-model="registrationCode" autocomplete="off" placeholder="留空时只附带邀请码" /></FormField>
+            <h2 class="text-sm font-medium text-[var(--text-main)]">{{ t("accessCode.shareLink") }}</h2>
+            <FormField :label="t('accessCode.attachedRegistrationCode')"><FormInput v-model="registrationCode" autocomplete="off" :placeholder="t('accessCode.registrationCodePlaceholder')" /></FormField>
         </Panel>
 
         <!-- 本人邀请码列表 -->
         <StateBlock v-if="loading && codes.length === 0" state="loading" />
         <StateBlock v-else-if="errorMsg && codes.length === 0" state="error" :message="errorMsg" :retry="load" />
-        <StateBlock v-else-if="codes.length === 0" state="empty" message="还没有邀请码" />
+        <StateBlock v-else-if="codes.length === 0" state="empty" :message="t('accessCode.noInvites')" />
         <ul v-else class="flex flex-col gap-2">
             <li v-for="code in codes" :key="code.id" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--border-color)] bg-[var(--bg-panel)] px-3 py-2">
                 <div class="min-w-0">
                     <p class="flex flex-wrap items-center gap-2"><span class="font-mono text-sm text-[var(--text-main)]">{{ code.code }}</span><span class="text-xs text-[var(--text-muted)]">{{ statusText(code) }}</span></p>
-                    <p class="text-xs text-[var(--text-muted)]">已用 {{ code.usedCount }} / {{ code.maxUses ?? "不限" }}{{ code.expiresAt ? ` · ${formatDate(code.expiresAt)} 到期` : "" }}{{ code.note ? ` · ${code.note}` : "" }}</p>
+                    <p class="text-xs text-[var(--text-muted)]">{{ t("accessCode.usage", {used: formatNumber(code.usedCount), maximum: code.maxUses === null ? t("common.unlimited") : formatNumber(code.maxUses)}) }}<span v-if="code.expiresAt"> · {{ t("accessCode.expires", {date: formatDate(code.expiresAt)}) }}</span><span v-if="code.note"> · {{ code.note }}</span></p>
                 </div>
-                <div class="flex gap-1"><IconButton title="复制邀请码" @click="copyText(code.code)"><span class="i-lucide-copy h-4 w-4"></span></IconButton><IconButton title="复制注册链接" variant="accent" @click="copyInviteLink(code.code)"><span class="i-lucide-link h-4 w-4"></span></IconButton><IconButton title="编辑设置" @click="openEdit(code)"><span class="i-lucide-settings-2 h-4 w-4"></span></IconButton><IconButton :title="code.disabledAt ? '启用' : '停用'" :variant="code.disabledAt ? 'accent' : 'danger'" @click="toggleDisabled(code)"><span :class="code.disabledAt ? 'i-lucide-play' : 'i-lucide-ban'" class="h-4 w-4"></span></IconButton></div>
+                <div class="flex gap-1"><IconButton :title="t('accessCode.copyInvite')" @click="copyText(code.code)"><span class="i-lucide-copy h-4 w-4"></span></IconButton><IconButton :title="t('accessCode.copyRegistrationLink')" variant="accent" @click="copyInviteLink(code.code)"><span class="i-lucide-link h-4 w-4"></span></IconButton><IconButton :title="t('accessCode.editSettings')" @click="openEdit(code)"><span class="i-lucide-settings-2 h-4 w-4"></span></IconButton><IconButton :title="code.disabledAt ? t('accessCode.enable') : t('accessCode.disable')" :variant="code.disabledAt ? 'accent' : 'danger'" @click="toggleDisabled(code)"><span :class="code.disabledAt ? 'i-lucide-play' : 'i-lucide-ban'" class="h-4 w-4"></span></IconButton></div>
             </li>
         </ul>
 
         <!-- 邀请码设置 -->
-        <Dialog :model-value="editing !== null" title="邀请码设置" size="sm" show-cancel confirm-label="保存" :busy="editBusy" @update:model-value="(open: boolean) => { if (!open) editing = null; }" @confirm="saveEdit">
+        <Dialog :model-value="editing !== null" :title="t('accessCode.inviteSettings')" size="sm" show-cancel :cancel-label="t('common.cancel')" :confirm-label="t('common.save')" :close-label="t('common.close')" :busy="editBusy" @update:model-value="(open: boolean) => { if (!open) editing = null; }" @confirm="saveEdit">
             <div class="flex flex-col gap-3">
-                <FormField label="备注"><FormInput v-model="editNote" :maxlength="120" /></FormField>
-                <FormField label="使用次数"><select v-model="editLimitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">不限次数</option><option value="limited">限制次数</option></select></FormField>
-                <FormField v-if="editLimitMode === 'limited'" label="最多使用"><FormNumberInput v-model="editMaxUses" :min="editing?.usedCount || 1" :max="100000" /></FormField>
-                <FormField label="过期时间"><FormInput v-model="editExpiresAt" type="datetime-local" /></FormField>
+                <FormField :label="t('accessCode.note')"><FormInput v-model="editNote" :maxlength="120" /></FormField>
+                <FormField :label="t('accessCode.useLimit')"><select v-model="editLimitMode" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-main)]"><option value="unlimited">{{ t("accessCode.unlimitedUses") }}</option><option value="limited">{{ t("accessCode.limitedUses") }}</option></select></FormField>
+                <FormField v-if="editLimitMode === 'limited'" :label="t('accessCode.maxUses')"><FormNumberInput v-model="editMaxUses" :min="editing?.usedCount || 1" :max="100000" /></FormField>
+                <FormField :label="t('accessCode.expiresAt')"><FormInput v-model="editExpiresAt" type="datetime-local" /></FormField>
                 <p v-if="editError" class="text-sm text-[var(--status-danger)]">{{ editError }}</p>
             </div>
         </Dialog>

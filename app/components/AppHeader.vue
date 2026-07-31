@@ -7,6 +7,7 @@ import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 const {session, refresh, logout} = useAuthState();
 const route = useRoute();
 const notification = useNotification();
+const {t} = useI18n();
 const registrationEnabled = computed(() => isRuntimeFlagEnabled(useRuntimeConfig().public.registrationEnabled));
 
 // 主题面板：调色板按钮弹出 ThemeSwitcher，点面板外自动关闭
@@ -28,11 +29,11 @@ const isAdmin = computed(() => session.value.user?.role === "admin");
 
 // 已登录用户菜单项（admin 额外一项管理入口）
 const userMenu = computed<DropdownItem[]>(() => {
-    const items: DropdownItem[] = [{label: "个人中心", value: "me", iconClass: "i-lucide-user"}];
+    const items: DropdownItem[] = [{label: t("nav.me"), value: "me", iconClass: "i-lucide-user"}];
     if (isAdmin.value) {
-        items.push({label: "管理控制台", value: "admin", iconClass: "i-lucide-shield"});
+        items.push({label: t("nav.admin"), value: "admin", iconClass: "i-lucide-shield"});
     }
-    items.push({label: "退出登录", value: "logout", iconClass: "i-lucide-log-out"});
+    items.push({label: t("nav.logout"), value: "logout", iconClass: "i-lucide-log-out"});
     return items;
 });
 
@@ -58,7 +59,7 @@ async function onUserMenu(value: string): Promise<void> {
         void navigateTo("/admin");
     } else if (value === "logout") {
         await logout();
-        notification.info("已退出登录");
+        notification.info(t("nav.loggedOut"));
         void navigateTo("/");
     }
 }
@@ -78,24 +79,25 @@ async function onUserMenu(value: string): Promise<void> {
             <form class="mx-auto flex w-full max-w-md items-center" @submit.prevent="submitSearch">
                 <div class="relative w-full">
                     <span class="i-lucide-search pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"></span>
-                    <input v-model="keyword" type="search" placeholder="搜索 Skill / Workflow / Profile…" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-sm text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)] focus:shadow-[0_0_0_3px_var(--accent-bg)]" />
+                    <input v-model="keyword" type="search" :placeholder="t('nav.searchPlaceholder')" class="h-9 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] pl-9 pr-3 text-sm text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent-main)] focus:shadow-[0_0_0_3px_var(--accent-bg)]" />
                 </div>
             </form>
 
             <!-- 右：登录态导航 -->
             <nav class="flex shrink-0 items-center gap-2">
+                <LocaleSwitcher />
                 <!-- 主题切换弹出面板 -->
                 <div ref="themeRoot" class="relative">
-                    <button type="button" title="切换主题" class="nb-ui-focus-ring flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]" @click="themeOpen = !themeOpen">
+                    <button type="button" :title="t('nav.switchTheme')" :aria-label="t('nav.switchTheme')" class="nb-ui-focus-ring flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]" @click="themeOpen = !themeOpen">
                         <span class="i-lucide-palette h-4.5 w-4.5"></span>
                     </button>
                     <div v-if="themeOpen" class="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border border-[var(--border-color)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-                        <div class="mb-2 text-xs font-medium text-[var(--text-muted)]">主题</div>
+                        <div class="mb-2 text-xs font-medium text-[var(--text-muted)]">{{ t("nav.theme") }}</div>
                         <ThemeSwitcher />
                     </div>
                 </div>
                 <template v-if="isLoggedIn">
-                    <Button size="sm" @click="navigateTo('/publish')"><span class="i-lucide-upload h-4 w-4"></span><span class="hidden sm:inline">发布</span></Button>
+                    <Button size="sm" @click="navigateTo('/publish')"><span class="i-lucide-upload h-4 w-4"></span><span class="hidden sm:inline">{{ t("nav.publish") }}</span></Button>
                     <Dropdown :items="userMenu" root-class="relative" menu-class="right-0 top-full mt-2 min-w-40" @select="onUserMenu">
                         <button type="button" class="flex h-9 items-center gap-2 rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-2.5 text-sm text-[var(--text-main)] transition-colors hover:bg-[var(--bg-hover)]">
                             <UserAvatar :username="session.user?.username ?? '?'" :avatar-url="session.user?.avatarUrl" :size="20" />
@@ -104,8 +106,8 @@ async function onUserMenu(value: string): Promise<void> {
                     </Dropdown>
                 </template>
                 <template v-else>
-                    <Button size="sm" variant="secondary" @click="navigateTo('/login')">登录</Button>
-                    <Button v-if="registrationEnabled" size="sm" @click="navigateTo('/register')">注册</Button>
+                    <Button size="sm" variant="secondary" @click="navigateTo('/login')">{{ t("nav.login") }}</Button>
+                    <Button v-if="registrationEnabled" size="sm" @click="navigateTo('/register')">{{ t("nav.register") }}</Button>
                 </template>
             </nav>
         </div>

@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import {onMounted, reactive, ref, watch} from "vue";
-import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {SegmentedControlOption, SegmentedControlValue} from "@notnotype/nb-ui/components";
 import type {PageDto, WorkshopItemDto} from "../../shared/dto/workshop.dto";
 
 // 个人页：我的发布（含 unlisted，可管理）/ 我的收藏 / 实例 / 备份 / 邀请好友 / 账号设置。
 definePageMeta({middleware: "auth"});
-useHead({title: "个人中心"});
-
 const api = useWorkshopApi();
 const notification = useNotification();
 const route = useRoute();
+const {t} = useI18n();
+const {resolve} = useLocalizedApiError();
+const {formatNumber} = useLocaleFormat();
+useHead({title: computed(() => t("me.title"))});
 
 const PAGE_SIZE = 24;
 
@@ -20,14 +21,14 @@ const TAB_VALUES: MeTab[] = ["published", "favorites", "instances", "backups", "
 // GitHub 回调会带 ?tab=account 直达账号设置
 const initialTab = TAB_VALUES.includes(route.query.tab as MeTab) ? route.query.tab as MeTab : "published";
 const tab = ref<MeTab>(initialTab);
-const tabOptions: SegmentedControlOption[] = [
-    {label: "我的发布", value: "published"},
-    {label: "我的收藏", value: "favorites"},
-    {label: "已连接实例", value: "instances"},
-    {label: "云备份", value: "backups"},
-    {label: "邀请好友", value: "invites"},
-    {label: "账号设置", value: "account"},
-];
+const tabOptions = computed<SegmentedControlOption[]>(() => [
+    {label: t("me.tabs.published"), value: "published"},
+    {label: t("me.tabs.favorites"), value: "favorites"},
+    {label: t("me.tabs.instances"), value: "instances"},
+    {label: t("me.tabs.backups"), value: "backups"},
+    {label: t("me.tabs.invites"), value: "invites"},
+    {label: t("me.tabs.account"), value: "account"},
+]);
 
 // 分页列表状态与加载逻辑（发布 / 收藏两处复用）
 type ItemFeed = {
@@ -66,9 +67,9 @@ function createFeed(fetcher: (page: {offset: number; limit: number}) => Promise<
                 state.loaded = true;
             } catch (error) {
                 if (reset) {
-                    state.error = resolveApiErrorMessage(error, "加载失败");
+                    state.error = resolve(error, "common.loadFailed");
                 } else {
-                    notification.error(resolveApiErrorMessage(error, "加载更多失败"));
+                    notification.error(resolve(error, "common.loadMoreFailed"));
                 }
             } finally {
                 state.loading = false;
@@ -93,9 +94,9 @@ async function unfavorite(item: WorkshopItemDto): Promise<void> {
         await api.unfavorite(item.slug);
         favorites.list = favorites.list.filter((fav) => fav.id !== item.id);
         favorites.total = Math.max(0, favorites.total - 1);
-        notification.success("已取消收藏");
+        notification.success(t("me.unfavorited"));
     } catch (error) {
-        notification.error(resolveApiErrorMessage(error, "操作失败"));
+        notification.error(resolve(error, "common.actionFailed"));
     }
 }
 
@@ -103,11 +104,11 @@ onMounted(() => {
     // GitHub 绑定回跳提示（github.get.ts 三种终态），提示后清掉 query 防刷新重复弹
     const github = route.query.github;
     if (github === "linked") {
-        notification.success("GitHub 账号绑定成功");
+        notification.success(t("me.githubLinked"));
     } else if (github === "already") {
-        notification.info("当前账号已绑定过 GitHub");
+        notification.info(t("me.githubAlreadyLinked"));
     } else if (github === "conflict") {
-        notification.error("该 GitHub 账号已被其他用户绑定");
+        notification.error(t("me.githubConflict"));
     }
     if (github) {
         void navigateTo({path: "/me", query: {tab: tab.value}}, {replace: true});
@@ -130,24 +131,24 @@ watch(tab, (current) => {
 <template>
     <section class="flex flex-col gap-5">
         <div class="flex flex-wrap items-center justify-between gap-3">
-            <h1 class="text-xl font-semibold text-[var(--text-main)]">个人中心</h1>
-            <Button size="sm" @click="navigateTo('/publish')"><span class="i-lucide-upload h-4 w-4"></span>发布新条目</Button>
+            <h1 class="text-xl font-semibold text-[var(--text-main)]">{{ t("me.title") }}</h1>
+            <Button size="sm" @click="navigateTo('/publish')"><span class="i-lucide-upload h-4 w-4"></span>{{ t("me.publishNew") }}</Button>
         </div>
 
-        <SegmentedControl :model-value="tab" :options="tabOptions" aria-label="个人页分区" @update:model-value="(value: SegmentedControlValue) => tab = value as MeTab" />
+        <SegmentedControl :model-value="tab" :options="tabOptions" :aria-label="t('me.sectionLabel')" @update:model-value="(value: SegmentedControlValue) => tab = value as MeTab" />
 
         <!-- 我的发布 -->
         <template v-if="tab === 'published'">
             <StateBlock v-if="published.loading && published.list.length === 0" state="loading" />
             <StateBlock v-else-if="published.error && published.list.length === 0" state="error" :message="published.error" :retry="() => published.load(true)" />
-            <StateBlock v-else-if="published.list.length === 0" state="empty" message="你还没有发布任何条目" />
+            <StateBlock v-else-if="published.list.length === 0" state="empty" :message="t('me.noPublished')" />
             <template v-else>
                 <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <MyItemManageCard v-for="item in published.list" :key="item.id" :item="item" @updated="onItemUpdated" />
                 </div>
                 <div class="flex flex-col items-center gap-2">
-                    <Button v-if="published.next !== null" variant="secondary" :loading="published.loadingMore" @click="published.load(false)">加载更多</Button>
-                    <p class="text-xs text-[var(--text-muted)]">共 {{ published.total }} 条</p>
+                    <Button v-if="published.next !== null" variant="secondary" :loading="published.loadingMore" @click="published.load(false)">{{ t("common.loadMore") }}</Button>
+                    <p class="text-xs text-[var(--text-muted)]">{{ t("common.totalItems", {count: formatNumber(published.total)}) }}</p>
                 </div>
             </template>
         </template>
@@ -168,17 +169,17 @@ watch(tab, (current) => {
         <template v-else>
             <StateBlock v-if="favorites.loading && favorites.list.length === 0" state="loading" />
             <StateBlock v-else-if="favorites.error && favorites.list.length === 0" state="error" :message="favorites.error" :retry="() => favorites.load(true)" />
-            <StateBlock v-else-if="favorites.list.length === 0" state="empty" message="还没有收藏任何条目" />
+            <StateBlock v-else-if="favorites.list.length === 0" state="empty" :message="t('me.noFavorites')" />
             <template v-else>
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <div v-for="fav in favorites.list" :key="fav.id" class="flex flex-col gap-1.5">
                         <ItemCard :item="fav" />
-                        <Button variant="subtle" size="sm" block @click="unfavorite(fav)"><span class="i-lucide-bookmark-x h-4 w-4"></span>取消收藏</Button>
+                        <Button variant="subtle" size="sm" block @click="unfavorite(fav)"><span class="i-lucide-bookmark-x h-4 w-4"></span>{{ t("me.unfavorite") }}</Button>
                     </div>
                 </div>
                 <div class="flex flex-col items-center gap-2">
-                    <Button v-if="favorites.next !== null" variant="secondary" :loading="favorites.loadingMore" @click="favorites.load(false)">加载更多</Button>
-                    <p class="text-xs text-[var(--text-muted)]">共 {{ favorites.total }} 条</p>
+                    <Button v-if="favorites.next !== null" variant="secondary" :loading="favorites.loadingMore" @click="favorites.load(false)">{{ t("common.loadMore") }}</Button>
+                    <p class="text-xs text-[var(--text-muted)]">{{ t("common.totalItems", {count: formatNumber(favorites.total)}) }}</p>
                 </div>
             </template>
         </template>

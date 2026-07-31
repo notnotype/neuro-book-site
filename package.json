@@ -28,6 +28,7 @@
         "@libsql/client": "^0.17.4",
         "@libsql/isomorphic-ws": "^0.1.5",
         "@notnotype/nb-ui": "github:notnotype/nb-ui#291b2d6b49c4e92557eb305a1ffa38370644a5ce",
+        "@nuxtjs/i18n": "^10.6.0",
         "@pinia/nuxt": "^0.11.3",
         "@prisma/adapter-libsql": "^7.8.0",
         "@prisma/client": "^7.8.0",

@@ -5,6 +5,8 @@ import type {WorkshopItemDto} from "../../shared/dto/workshop.dto";
 defineProps<{
     item: WorkshopItemDto;
 }>();
+const {t} = useI18n();
+const {relativeTime, formatNumber} = useLocaleFormat();
 </script>
 
 <template>
@@ -13,9 +15,9 @@ defineProps<{
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5">
                 <ItemTypeBadge :type="item.type" size="sm" />
-                <span v-if="item.featured" class="i-lucide-star h-3.5 w-3.5 text-[var(--accent-main)]" title="编辑推荐"></span>
+                <span v-if="item.featured" class="i-lucide-star h-3.5 w-3.5 text-[var(--accent-main)]" :title="t('asset.featured')"></span>
             </div>
-            <span v-if="item.containsExecutableCode" class="i-lucide-triangle-alert h-4 w-4 text-[var(--status-warning)]" title="含可执行代码"></span>
+            <span v-if="item.containsExecutableCode" class="i-lucide-triangle-alert h-4 w-4 text-[var(--status-warning)]" :title="t('asset.executable')"></span>
         </div>
 
         <!-- 标题 + 摘要 -->
@@ -30,11 +32,11 @@ defineProps<{
         <!-- 统计行：下载 / 点赞 / 评论 + 版本 -->
         <div class="flex items-center justify-between gap-2 border-t border-[var(--border-color)] pt-3 text-xs text-[var(--text-muted)]">
             <div class="flex items-center gap-3">
-                <span class="inline-flex items-center gap-1"><span class="i-lucide-download h-3.5 w-3.5"></span>{{ item.downloadCount }}</span>
-                <span class="inline-flex items-center gap-1"><span class="i-lucide-heart h-3.5 w-3.5"></span>{{ item.likeCount }}</span>
-                <span class="inline-flex items-center gap-1"><span class="i-lucide-message-square h-3.5 w-3.5"></span>{{ item.commentCount }}</span>
+                <span class="inline-flex items-center gap-1"><span class="i-lucide-download h-3.5 w-3.5"></span>{{ formatNumber(item.downloadCount) }}</span>
+                <span class="inline-flex items-center gap-1"><span class="i-lucide-heart h-3.5 w-3.5"></span>{{ formatNumber(item.likeCount) }}</span>
+                <span class="inline-flex items-center gap-1"><span class="i-lucide-message-square h-3.5 w-3.5"></span>{{ formatNumber(item.commentCount) }}</span>
             </div>
-            <span>{{ item.latestVersion ? `v${item.latestVersion}` : "未发布" }}</span>
+            <span>{{ item.latestVersion ? `v${item.latestVersion}` : t("asset.unpublished") }}</span>
         </div>
 
         <!-- 作者 + 更新时间 -->

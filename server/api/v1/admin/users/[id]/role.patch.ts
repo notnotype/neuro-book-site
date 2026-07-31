@@ -2,6 +2,7 @@ import {prisma} from "../../../../../database/prisma";
 import {requireAdmin, requireIdParam} from "../../../../../utils/workshop";
 import {AdminUserRoleRequestSchema} from "../../../../../utils/admin-dto";
 import {validateBody} from "../../../../../utils/dto";
+import {apiError} from "../../../../../utils/api-error";
 
 /**
  * admin 授予 / 收回管理员角色。
@@ -15,11 +16,11 @@ export default defineEventHandler(async (event): Promise<{ok: true}> => {
     const body = await validateBody(event, AdminUserRoleRequestSchema);
 
     if (id === admin.id) {
-        throw createError({statusCode: 400, message: "不能变更自己的角色"});
+        throw apiError(400, "self_role_change_forbidden", "Cannot change your own role");
     }
     const target = await prisma.user.findUnique({where: {id}, select: {id: true, sessionVersion: true}});
     if (!target) {
-        throw createError({statusCode: 404, message: "用户不存在"});
+        throw apiError(404, "user_not_found", "User not found");
     }
 
     await prisma.user.update({
