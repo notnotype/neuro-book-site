@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
+import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 // 注册页：注册码必填负责准入，邀请码可选并只记录邀请归属；两者可从分享链接预填。
 definePageMeta({layout: false});
@@ -9,7 +10,7 @@ const {refresh} = useAuthState();
 const notification = useNotification();
 const route = useRoute();
 const publicConfig = useRuntimeConfig().public;
-const githubOAuthEnabled = computed(() => publicConfig.githubOAuthEnabled === true);
+const githubOAuthEnabled = computed(() => isRuntimeFlagEnabled(publicConfig.githubOAuthEnabled));
 const username = ref("");
 const password = ref("");
 const registrationCode = ref(typeof route.query.registrationCode === "string" ? route.query.registrationCode : "");
@@ -18,7 +19,7 @@ const busy = ref(false);
 const errorMsg = ref(""); // 表单内可恢复错误，就地展示
 
 onMounted(() => {
-    if (publicConfig.registrationEnabled !== true) {
+    if (!isRuntimeFlagEnabled(publicConfig.registrationEnabled)) {
         void navigateTo("/login", {replace: true});
     }
 });

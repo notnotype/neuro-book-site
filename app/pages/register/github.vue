@@ -2,6 +2,7 @@
 import {onMounted, ref} from "vue";
 import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {PendingOAuthDto} from "../../../shared/dto/auth.dto";
+import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 // GitHub 补全注册页：/auth/github 未绑定且未登录时跳来。
 // pending 身份在 sealed session cookie 里，这里补用户名、注册码与可选邀请码（免设密码）。
@@ -24,7 +25,8 @@ const busy = ref(false);
 const errorMsg = ref("");
 
 onMounted(async () => {
-    if (publicConfig.githubOAuthEnabled !== true || publicConfig.registrationEnabled !== true) {
+    if (!isRuntimeFlagEnabled(publicConfig.githubOAuthEnabled)
+        || !isRuntimeFlagEnabled(publicConfig.registrationEnabled)) {
         await navigateTo("/login", {replace: true});
         return;
     }

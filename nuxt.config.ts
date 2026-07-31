@@ -18,7 +18,8 @@ export default defineNuxtConfig({
     },
     runtimeConfig: {
         public: {
-            registrationEnabled: process.env.NB_PRIVATE_MODE !== "1" && process.env.NODE_ENV !== "production",
+            // 生产默认关闭；部署时由同名 NUXT_PUBLIC_ 环境变量在运行时显式开启。
+            registrationEnabled: process.env.NODE_ENV !== "production",
             githubOAuthEnabled: process.env.NB_PRIVATE_MODE !== "1"
                 && process.env.NB_GITHUB_OAUTH_ENABLED !== "0"
                 && process.env.NODE_ENV !== "production",

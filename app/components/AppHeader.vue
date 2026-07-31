@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref} from "vue";
 import type {DropdownItem} from "@notnotype/nb-ui/components";
+import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 // 顶栏：左品牌、中搜索、右登录态导航。session 由 useAuthState 全局共享。
 const {session, refresh, logout} = useAuthState();
 const route = useRoute();
 const notification = useNotification();
-const registrationEnabled = computed(() => useRuntimeConfig().public.registrationEnabled === true);
+const registrationEnabled = computed(() => isRuntimeFlagEnabled(useRuntimeConfig().public.registrationEnabled));
 
 // 主题面板：调色板按钮弹出 ThemeSwitcher，点面板外自动关闭
 const themeOpen = ref(false);

@@ -3,12 +3,13 @@ import {computed, onMounted, reactive, ref} from "vue";
 import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
 import type {MeProfileDto} from "../../shared/dto/auth.dto";
 import type {PassportIdentityDto} from "../../shared/dto/passport.dto";
+import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 // 账号设置面板（/me「账号设置」tab）：资料表单 / GitHub 绑定 / 密码三块。
 const api = useWorkshopApi();
 const notification = useNotification();
 const {refresh} = useAuthState();
-const githubOAuthEnabled = computed(() => useRuntimeConfig().public.githubOAuthEnabled === true);
+const githubOAuthEnabled = computed(() => isRuntimeFlagEnabled(useRuntimeConfig().public.githubOAuthEnabled));
 
 const profile = ref<MeProfileDto | null>(null);
 const identities = ref<PassportIdentityDto[]>([]);

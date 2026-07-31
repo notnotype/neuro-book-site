@@ -19,6 +19,8 @@ sudo install -m 0600 -o root -g root .env.production.example .env
 - `NUXT_SESSION_PASSWORD` 使用 48 字节 CSPRNG 结果，不得复用账号密码。
 - 不得添加 `ADMIN_PASSWORD`、OAuth secret 或 GitHub Token。
 - `NB_TRUSTED_PROXY_ADDRESSES` 固定为 Compose bridge 网关 `172.30.0.1`。
+- `NUXT_PUBLIC_REGISTRATION_ENABLED` 是非敏感的密码注册开关；生产缺省和示例均为 `0`。准备接受有效注册码注册时设为 `1`，导航、登录页和 `/register` 会同时开放，但没有有效注册码仍无法创建账号。
+- `NB_PRIVATE_MODE=1` 继续关闭 GitHub OAuth；单独开启密码注册不会开放 GitHub 登录。
 - `NB_LOG_LEVEL` 只接受 `debug`、`info`、`warn`、`error`，生产默认使用 `info`。
 - `NB_LOG_FILE` 固定为 `/logs/site.jsonl`；生产缺失、使用相对路径或目录不可写时拒绝启动。
 
@@ -34,6 +36,8 @@ openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n'
 sudo test "$(stat -c '%a:%U:%G' .env)" = "600:root:root"
 sudo docker compose config --quiet
 ```
+
+`NUXT_PUBLIC_REGISTRATION_ENABLED` 使用 Nuxt 标准运行时前缀，因此修改后只需重建容器，不需要为开关重新构建镜像。发布新版本前仍应先在 loopback 确认 `/register` 页面配置和 `/api/auth/register` 门禁一致。
 
 ## 首次启动
 

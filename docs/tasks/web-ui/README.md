@@ -146,5 +146,14 @@ admin：`create/list/updateRegistrationCode` 管理注册码，另有 `listRepor
 - 管理员可复制只带注册码的 `/register?registrationCode=...` 链接。用户可复制带邀请码的链接，并可手动附加注册码形成 `/register?registrationCode=...&inviteCode=...`。
 - 注册页从 URL 预填两类码；GitHub OAuth 往返通过当前标签页的 `sessionStorage` 暂存两类码。密码注册与 OAuth 补全注册共用服务端原子消费合同。
 - 数据库将旧的一次性管理员邀请码迁为不限次数注册码，并保留已有注册归属；新的用户邀请码表从空表开始。
-- 生产私有模式继续关闭注册与 GitHub OAuth。本轮只准备能力，不自动通过 Public Invite Gate，也不对外发码。
+- 当时生产私有模式同时关闭注册与 GitHub OAuth，只准备能力，不自动通过 Public Invite Gate，也不对外发码。该结论已由下方 2026-07-29 follow-up 调整。
 - 验证：注册码不限次数复用、有限次数并发门禁、过期/停用、邀请码归属/越权和迁移均由 HTTP 集成测试覆盖；未自动执行浏览器验证。
+
+## 2026-07-29 注册链接生产门禁修复
+
+- 根因：生产构建把 `registrationEnabled` 固定为 `false`，同时服务端又让 `NB_PRIVATE_MODE=1` 强制关闭注册。因此分享链接虽然能命中 `/register`，页面挂载后仍跳到登录页，绕过页面直接提交也只会得到 `403 registration_disabled`。
+- 密码注册改用独立运行时开关 `NUXT_PUBLIC_REGISTRATION_ENABLED`。生产缺省关闭，显式设为 `1/true` 时，导航和登录页展示注册入口，注册链接继续预填注册码与可选邀请码，服务端进入现有注册码原子消费流程。
+- `NB_PRIVATE_MODE=1` 继续约束 GitHub OAuth；开启密码注册不会开放 OAuth。前端统一兼容 Nuxt public config 的 boolean 构建值和 string 运行时覆盖值，避免环境变量已设为 `1` 但 `=== true` 仍判假的第二次漂移。
+- 本轮只修改 `dev` 代码、示例和验证，不提交、不推送、不部署，也不改 DMIT 环境。线上链接继续保持关闭，直到后续发布新镜像并在 DMIT 设置 `NUXT_PUBLIC_REGISTRATION_ENABLED=1`。
+- 验证实际结果：首次生产测试发现 Nuxt 会把环境值 `1` 注入为数字 `1`，不是预想的字符串；共享解析器因此扩为 `boolean | string | number` 并增加 `1/0` 回归。隔离 `dev` 提交并只应用本补丁后，typecheck、build、运行时/配置/生产双门禁 19 项及账号管理 16 项通过；`api-v1` 25 项中与注册有关的用例均通过，最后 2 个既有 Workshop 用例稳定超时。主工作区检查另被在途的 TypeScript 7 / vue-tsc 不兼容和 Workshop 缺失导出阻断，均未在本任务中改动。
+- 与原计划的出入：没有执行全量绿灯，因为当前 `dev` 在途改动存在上述两个独立基线问题；没有执行浏览器验收、提交、推送、DMIT 环境修改或生产部署，符合本轮边界。
