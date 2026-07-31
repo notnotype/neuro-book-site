@@ -2,7 +2,7 @@
 
 ## Summary
 
-NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已部署 DMIT。新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。密码注册已独立开放，GitHub OAuth 继续关闭；Task 02 的账号显示名称、结构化错误和中英双语已部署，认证表单与开关链路的审查收口已完成本地验证，待固定 digest 发布。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已部署 DMIT。新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。密码注册已独立开放，GitHub OAuth 继续关闭；Task 02 的账号显示名称、中英双语、认证表单与开关链路收口均已部署并完成公网验收。
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
@@ -58,7 +58,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 | 注册码与邀请码分离（Task 119 follow-up） | Done | 管理员注册码负责注册准入，用户邀请码只记录可选归属；两类码支持不限/限次、过期、备注与停用。密码注册与私有模式已解耦，生产注册码注册已开放；GitHub OAuth 仍关闭。 |
 | 官方站生产化与部署（Task 128） | In Progress | 代码、公开仓库/GHCR、`arch` 隔离容器验证、DMIT loopback、DNS/证书和 Nginx stream 443 均已完成；固定 digest、容器/主机重启、冷快照恢复和镜像回滚已演练。`deploy:dmit` 已通过真实 push、Actions、digest、冷快照升级和幂等重跑；首次 CLI 兼容失败在 DMIT 写入前停止并已修复。待既有 Xray 客户端确认、真实 NeuroBook 闭环和 canary 发布。 |
 | Agent 资产工作台（Task 01） | Deployed | 三类统一包、SemVer/ordinal、AST 校验、有界 ZIP、可恢复两步发布、归档一致性与迁移 guard 已部署。`nb-ui` 54 项测试 + typecheck/build；部署提交 20 文件/141 测试、typecheck/build、真实 HTTP、桌面/移动端 Playwright 与 `linux/amd64` 运行约束均通过；生产两份旧 Skill 已迁为 schema 1。 |
-| 账号名称与中英双语（Task 02） | Follow-up Ready | 首轮显示名称和中英双语已部署；审查收口进一步移除浏览器原生校验抢占、认证成功后的重复 session 请求和 GitHub pending 错误误判，并把密码注册/OAuth 路由门禁解耦。162 项测试、typecheck、production build及桌面/移动端 Playwright 已通过，待 Actions 与 DMIT 固定 digest 发布。 |
+| 账号名称与中英双语（Task 02） | Deployed | 首轮显示名称和中英双语已部署；审查收口进一步移除浏览器原生校验抢占、认证成功后的重复 session 请求和 GitHub pending 错误误判，并把密码注册/OAuth 路由门禁解耦。162 项测试、typecheck、production build、桌面/移动端 Playwright、Actions `linux/amd64` 和 DMIT 固定 digest 升级均已通过。 |
 
 ## Known Follow-ups
 

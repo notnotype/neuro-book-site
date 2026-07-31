@@ -134,5 +134,15 @@
 
 ### Pending Delivery
 
-- [ ] 推送 `dev`，快进合入 `master`，完成 Actions `linux/amd64` 门禁与 DMIT 固定 digest 升级。
-- [ ] 部署后补记 source commit、Actions run、GHCR digest、冷快照和公网 smoke；生产不创建测试账号。
+- [x] 推送 `dev`，快进合入 `master`，完成 Actions `linux/amd64` 门禁与 DMIT 固定 digest 升级。
+- [x] 部署后补记 source commit、Actions run、GHCR digest、冷快照和公网 smoke；生产未创建测试账号。
+
+### Follow-up Production Rollout
+
+- source commit：`5250a85c3cc43c182b8c101d9bf2071662dc09cb`。
+- GitHub Actions Run `30639509781`：frozen install、typecheck、production build、162 项测试和 `linux/amd64` Buildx 推送全部通过。
+- 新镜像：`ghcr.io/notnotype/neuro-book-site@sha256:bc56e485849329872992239f5969b31453cd70b8c1e1934d4634075d5e88494d`；上一镜像为 `sha256:e9b0ee2079a4f3536546ffb2a45786ba0d1cb47c6b864dec3fdf1f7333d34d8d`。
+- 冷快照：`/srv/neuro-book-site/ops/deployments/20260731T144320Z/data.before.tar`；只读 Agent 资产 preflight 检查 2 份归档，无迁移、恢复或清理动作。
+- 公网 live / ready 全部通过，数据库、migration、Agent 资产、三类持久目录和容量检查均为 `ok`；容器 Docker health 为 `healthy`，镜像 UID `10001:10001`，根文件系统只读。
+- 公网注册页显示 6 个字段并启用站点校验，GitHub 入口按私有模式隐藏；切换 English 后 URL 和注册码保持，语言 Cookie 为 `Secure; SameSite=Lax; Path=/`。浏览器 0 console error / 0 warning。
+- 生产验收没有提交注册表单或创建测试账号。本轮没有数据库 migration，回滚只需恢复上一镜像 digest；冷快照继续保留。
