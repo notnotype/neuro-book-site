@@ -25,7 +25,7 @@
 - 首次发布使用可恢复的两步流程：先创建作者可见的无版本草稿，再上传首版；首版成功前不会进入任何公开面。
 - 归档先 fsync 并原子落位，版本、元数据、风险字段和目标状态随后在一个数据库事务提交；数据库记录不再先于 ZIP 出现。
 - 浏览器与服务端共享协议规则，分别使用 `fflate` 与 `yauzl` 的有界 ZIP 适配器；服务端上传、迁移、列表和预览不再使用整包无界解压。
-- 迁移工具默认执行只读 preflight，只有 `--apply` 才修改 ZIP 和数据库；部署脚本与容器 entrypoint 已接入 guard，但生产迁移尚未执行。
+- 迁移工具默认执行只读 preflight，只有 `--apply` 才修改 ZIP 和数据库；部署脚本与容器 entrypoint 已接入 guard，生产已通过该链路完成两份 schema 0 Skill 迁移。
 
 ## Decisions / Discussion
 
@@ -118,6 +118,9 @@
 - 用户授权部署后，首个目标镜像在 DMIT 停站前的只读 preflight 被两个 schema 0 Skill 拦下；它们符合旧协议，但 `SKILL.md` 没有新协议要求的 YAML frontmatter。线上容器、数据库和归档均未改变。
 - 旧包迁移现在只为“完全没有 frontmatter”的 schema 0 Skill 合成 `name` / `description`，description 取原正文第一条非空文本并保留正文；已有但损坏或身份冲突的 frontmatter 仍由统一校验器失败关闭。
 - 单元测试覆盖 CRLF 正文与 frontmatter 合成，真实 SQLite/ZIP 集成 fixture 改为无 frontmatter 旧包，继续覆盖 preflight 零写入、apply、摘要更新、幂等与 sidecar 恢复。
+- 修复提交 `eb3fb96` 通过本地 typecheck、production build、20 个测试文件 / 141 项测试，并通过 Actions Run `30621321917` 的 verify 与 container job。
+- DMIT 最终运行 digest `sha256:b86259be17a2ad4c2c0b55e94bc0d09e5250665c786643021bc97bad77201fbb`；停站前 preflight 只报告两项 migrate，冷快照写入 `ops/deployments/20260731T095243Z/data.before.tar` 后才执行 Prisma 与归档 apply。
+- 两份生产版本均从整数 `1` 迁为 SemVer `1.0.0`、ordinal `1`、package schema 1，摘要/大小同步更新且无残留 sidecar；本地与公网 readiness、公开 meta、`111` 文件列表和持久 JSONL 日志均验收通过。
 
 ## Verification / Test
 
@@ -130,7 +133,7 @@
 ### neuro-book-site
 
 - `bun run typecheck` 通过。
-- `bun x vitest run --exclude ".agent/**"` 通过：`21` 个测试文件、`144` 项测试。
+- `bun x vitest run --exclude ".agent/**"` 通过：部署提交为 `20` 个测试文件、`141` 项测试。
 - `bun run build` 通过。
 - 真实 HTTP 集成覆盖 API v1 `25/25`，全组 Passport / Backup / Account / Admin 共 `61/61`；测试进程主动 drain Nitro stdout/stderr，避免 Pino pipe 背压制造尾部假超时。
 - 迁移集成测试覆盖真实 SQLite 与 ZIP 的映射、合并、摘要更新、确定性 sidecar、幂等、preflight 零写入和失败恢复。
@@ -154,6 +157,12 @@
 - 容器矩阵完成后才补浏览器端安装身份同步；该修复不改变服务端、entrypoint 或容器约束，最终生产 build 已在修复后重跑，但没有把早于前端修复的容器证据描述为最终镜像逐字节复验。
 - 验证完成后已删除 `arch` 上的测试镜像、容器和精确临时目录；没有部署、运行或推送该镜像。
 
+### Production Deployment
+
+- 最终 Actions Run `30621321917` 的 frozen install、typecheck、build、test 与 `linux/amd64` container job 全部成功；GHCR 以不可变 digest 部署。
+- entrypoint 成功应用两段 Task 01 Prisma migration，并报告 `checked=2 / migrated=2`；数据库记录、ZIP、风险字段和 readiness `agentAssets` 一致。
+- 生产容器使用非 root / 只读根等既有 Compose 约束，loopback 与 `https://nbook.notnotype.com` readiness 都为 `ready`；本轮未修改 DNS、Nginx、443 或 Xray。
+
 ## Deviations From Plan
 
 - 计划中的两个发布页面由一个 Nuxt 可选参数页面 `app/pages/publish/[[slug]].vue` 承载，仍同时提供 `/publish` 和 `/publish/:slug`，避免重复宿主逻辑。
@@ -162,7 +171,7 @@
 - 安装身份 ADR 原计划使用编号 `0009`，但 NeuroBook 主仓脏工作区已存在另一份 `0009` 且 `0010` 也已占用；实际使用 `0011`，避免重编号或覆盖无关工作。
 - 容器矩阵早于最后的浏览器端安装身份同步修复；修复后重跑了全量测试、typecheck 和生产 build，没有重复不受该前端改动影响的远端运行约束矩阵。
 - 本任务没有实现 NeuroBook 客户端的安装、更新检测、冲突处理或回滚，因此尚不能把统一包协议标记为端到端可用。
-- 生产数据库/ZIP 迁移、站点部署和 DMIT 配置均未执行。代码已把只读 preflight、冷快照后的 entrypoint apply 和失败整数据回滚接入普通升级路径，但实际升级仍需单独授权。
+- 首次部署镜像通过 CI 后在停站前 preflight 暴露旧 Skill frontmatter 迁移遗漏；门禁按设计在任何生产写入前停止。修复采用通用 schema 0 转换并重新走完整 CI/镜像/预检链路，没有手改生产 ZIP 绕过协议。
 
 ## Changed Areas
 
@@ -178,7 +187,6 @@
 
 ## TODO / Follow-ups
 
-- [ ] 单独审批并执行包含只读 preflight、冷快照、数据库 migration、归档 apply 和失败回滚的 DMIT 升级。
 - [ ] 在 NeuroBook 客户端实现 Workshop 安装、更新检测、冲突处理和回滚。
 - [ ] 在允许第三方 Workflow 自动安装前完成执行隔离威胁模型与 ADR，不能复用站点 AST 检查作为安全证明。
 - [ ] 客户端能力完成后再进行真实站点到 NeuroBook 的端到端验收。
