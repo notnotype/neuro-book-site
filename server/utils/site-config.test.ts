@@ -28,19 +28,29 @@ describe("site feature gates", () => {
         vi.stubEnv("NODE_ENV", "production");
         vi.stubEnv("NB_PRIVATE_MODE", "");
         vi.stubEnv("NB_GITHUB_OAUTH_ENABLED", "1");
+        vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", undefined);
 
         expect(isPrivateSite()).toBe(true);
         expect(isRegistrationEnabled()).toBe(false);
         expect(isGitHubOAuthEnabled()).toBe(false);
     });
 
-    it("开发环境可显式开启私有模式", () => {
+    it("私有模式可单独开启密码注册，但仍关闭 GitHub OAuth", () => {
         vi.stubEnv("NODE_ENV", "development");
         vi.stubEnv("NB_PRIVATE_MODE", "1");
+        vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "1");
 
         expect(isPrivateSite()).toBe(true);
-        expect(isRegistrationEnabled()).toBe(false);
+        expect(isRegistrationEnabled()).toBe(true);
         expect(isGitHubOAuthEnabled()).toBe(false);
+    });
+
+    it("开发环境可显式关闭密码注册", () => {
+        vi.stubEnv("NODE_ENV", "development");
+        vi.stubEnv("NB_PRIVATE_MODE", "0");
+        vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "false");
+
+        expect(isRegistrationEnabled()).toBe(false);
     });
 });
 
@@ -85,6 +95,7 @@ describe("productionConfigErrors", () => {
         vi.stubEnv("NB_LOG_FILE", "/logs/site.jsonl");
         vi.stubEnv("NB_TRUSTED_PROXY_ADDRESSES", "172.30.0.1");
         vi.stubEnv("NB_PRIVATE_MODE", "1");
+        vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "0");
         vi.stubEnv("ADMIN_PASSWORD", "");
         delete process.env.ADMIN_PASSWORD;
     }
@@ -115,5 +126,12 @@ describe("productionConfigErrors", () => {
             "NB_LOG_LEVEL 必须是 debug/info/warn/error",
             "NB_LOG_FILE 必须是绝对路径",
         ]));
+    });
+
+    it("拒绝非法注册开关", () => {
+        validProductionEnv();
+        vi.stubEnv("NUXT_PUBLIC_REGISTRATION_ENABLED", "enabled");
+
+        expect(productionConfigErrors()).toContain("NUXT_PUBLIC_REGISTRATION_ENABLED 必须是 0/1/false/true");
     });
 });

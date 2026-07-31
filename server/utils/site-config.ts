@@ -34,14 +34,17 @@ function runtimeNodeEnv(): string {
     return process.env[name]?.trim() ?? "";
 }
 
-/** owner-only 私有模式；生产默认开启。 */
+/** 生产受限模式；生产默认开启，GitHub OAuth 等高风险入口受其约束。 */
 export function isPrivateSite(): boolean {
     return envBoolean("NB_PRIVATE_MODE", runtimeNodeEnv() === "production");
 }
 
-/** 私有模式下注册服务端强制关闭。 */
+/**
+ * 密码注册独立门禁。生产缺省关闭，开发缺省开启；显式配置不受私有模式影响。
+ * 使用 NUXT_PUBLIC_ 前缀是为了让服务端与浏览器消费同一个非敏感开关。
+ */
 export function isRegistrationEnabled(): boolean {
-    return !isPrivateSite();
+    return envBoolean("NUXT_PUBLIC_REGISTRATION_ENABLED", runtimeNodeEnv() !== "production");
 }
 
 /** 私有模式下 GitHub OAuth 强制关闭；开发环境可显式或默认开启。 */
@@ -129,6 +132,7 @@ export function productionConfigErrors(): string[] {
     if (trustedProxyAddresses().size === 0) {
         errors.push("NB_TRUSTED_PROXY_ADDRESSES 必须至少包含一个可信直连代理 IP");
     }
+    requireOptionalBoolean(errors, "NUXT_PUBLIC_REGISTRATION_ENABLED");
     if (!isPrivateSite()) {
         errors.push("私有内测要求 NB_PRIVATE_MODE=1");
     }
@@ -151,5 +155,17 @@ function requirePositiveInteger(errors: string[], name: string): void {
     const value = Number.parseInt(process.env[name]?.trim() ?? "", 10);
     if (!Number.isSafeInteger(value) || value <= 0) {
         errors.push(`${name} 必须是正整数字节数`);
+    }
+}
+
+/** 校验可选布尔环境变量；缺省由调用方采用 fail-closed 默认值。 */
+function requireOptionalBoolean(errors: string[], name: string): void {
+    const rawValue = process.env[name];
+    if (rawValue === undefined) {
+        return;
+    }
+    const value = rawValue.trim().toLowerCase();
+    if (value !== "0" && value !== "1" && value !== "false" && value !== "true") {
+        errors.push(`${name} 必须是 0/1/false/true`);
     }
 }

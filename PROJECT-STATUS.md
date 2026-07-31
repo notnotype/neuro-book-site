@@ -6,9 +6,12 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
+密码注册门禁已拆为独立运行时开关，并通过 typecheck、production build、11 项配置单测与 24 项生产/账号集成测试；等待本次固定 digest 升级启用。
+
 ## Product Facts
 
 - Nuxt 4 SPA + Nitro API；Prisma 7/libSQL SQLite；`nuxt-auth-utils` cookie session；zod DTO；`@notnotype/nb-ui` 固定公开 Git commit，不依赖 Bun link。
+- 密码注册由 `NUXT_PUBLIC_REGISTRATION_ENABLED` 独立控制；`NB_PRIVATE_MODE=1` 继续关闭 GitHub OAuth，不再连带关闭注册码注册。
 - 管理员 `RegistrationCode` 负责注册准入，用户 `InviteCode` 只记录可选邀请归属；两类码支持不限/限次、过期和停用，注册页可从链接同时预填。生产 owner-only 私有模式服务端仍关闭注册和 GitHub OAuth，前端隐藏入口。
 - Backup 只接收 `NBOOKBK1` magic、`.nbbackup` 和 `application/vnd.neurobook.backup`；`sha256` 是密文字节摘要，`keyId` 只用于客户端选择密钥，站点无法解密。
 - 全站 Workshop + Backup 默认上限 6 GiB并保留 4 GiB 物理空间；两类上传共用串行容量门禁。Workshop 压缩包 20 MiB、解压 100 MiB、500 条目，并拒绝逃逸/重复路径和非法 manifest。
@@ -37,6 +40,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 
 | Task | Status | Notes |
 | --- | --- | --- |
+| 密码注册生产门禁 | Ready for deploy | 注册开关与私有模式解耦，前端兼容 Nuxt boolean/string/number 运行时值；等待本次生产升级启用。 |
 | Initial Template | Done | Base fullstack skeleton is available. |
 | Workshop 后端第一版 | Done | schema + 迁移 + DTO + API v1 + 邀请码注册 + zip 上传/下载 + 社交互动 + admin 管理；实现后审查修复并发窗口（邀请码双花、同版本上传先写库后落盘、slug 抢注 409）、下架条目可撤销收藏/点赞、meta 补 platformVersion；40 测试全绿（含 20 个真实 HTTP 集成用例，含并发用例）。 |
 | Workshop Web 前端 | Done | 全量页面一次做完：`/`（筛选态映射 URL query）、`/items/:slug`（双栏 + sticky 下载栏 + 点赞/收藏乐观更新 + 举报 + 评论区 + 404 态）、`/users/:username`、`/publish`（四步向导 + 前端 fflate 解析 manifest + 重试防 slug 409）、`/me`（发布/收藏两 Tab）、`/admin`（邀请码/举报/条目管理）、`/login`+`/register`（补邀请码）。类型化 `useWorkshopApi` 单一 $fetch 出口；icons 走 unocss module flag；description 纯文本防 XSS。**后端补口** `GET /api/v1/me/items`（本人全部状态条目，含 unlisted）。typecheck / build 全绿，测试 40→41（新增 `/me/items` 集成用例）。未做浏览器验证。 |

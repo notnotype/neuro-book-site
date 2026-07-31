@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {resolveApiErrorMessage} from "@notnotype/nb-ui/utils";
+import {isRuntimeFlagEnabled} from "~/utils/runtime-flag";
 
 // 登录页：全屏居中卡片，不套默认布局（无顶栏）。
 definePageMeta({layout: false});
@@ -9,8 +10,8 @@ const {refresh} = useAuthState();
 const notification = useNotification();
 const route = useRoute();
 const publicConfig = useRuntimeConfig().public;
-const registrationEnabled = computed(() => publicConfig.registrationEnabled === true);
-const githubOAuthEnabled = computed(() => publicConfig.githubOAuthEnabled === true);
+const registrationEnabled = computed(() => isRuntimeFlagEnabled(publicConfig.registrationEnabled));
+const githubOAuthEnabled = computed(() => isRuntimeFlagEnabled(publicConfig.githubOAuthEnabled));
 const username = ref("");
 const password = ref("");
 const busy = ref(false);

@@ -30,6 +30,7 @@ function productionEnv(targetPort: number): NodeJS.ProcessEnv {
         NB_SITE_ORIGIN: "https://nbook.notnotype.com",
         NB_TRUSTED_PROXY_ADDRESSES: "127.0.0.1",
         NB_PRIVATE_MODE: "1",
+        NUXT_PUBLIC_REGISTRATION_ENABLED: "1",
         NB_GITHUB_OAUTH_ENABLED: "0",
         NB_LOG_LEVEL: "info",
         NB_LOG_FILE: logFile,
@@ -47,10 +48,15 @@ function productionEnv(targetPort: number): NodeJS.ProcessEnv {
 
 /** 轮询到服务可响应，超时给出确定性失败。 */
 async function waitUntilLive(): Promise<void> {
+    await waitUntilLiveAt(baseUrl);
+}
+
+/** 轮询指定生产实例到 live，供不同注册门禁配置共用。 */
+async function waitUntilLiveAt(origin: string): Promise<void> {
     const deadline = Date.now() + 30_000;
     while (Date.now() <= deadline) {
         try {
-            const response = await fetch(`${baseUrl}/api/health/live`);
+            const response = await fetch(`${origin}/api/health/live`);
             if (response.ok) {
                 return;
             }
@@ -210,15 +216,41 @@ describe("生产结构化日志", () => {
     });
 });
 
-describe("owner-only 公网门禁", () => {
-    it("注册返回稳定 403，OAuth API 与回调返回 404", async () => {
+describe("生产公网门禁", () => {
+    it("显式开启后注册页公开配置生效，接口进入正常参数校验，OAuth 仍返回 404", async () => {
+        const page = await fetch(`${baseUrl}/register?registrationCode=redacted`);
+        expect(page.status).toBe(200);
+        expect(await page.text()).toMatch(/registrationEnabled:(?:true|1|"1")/u);
+
         const register = await fetch(`${baseUrl}/api/auth/register`, {method: "POST"});
-        expect(register.status).toBe(403);
+        expect(register.status).toBe(400);
         const payload = (await register.json()) as {data?: {error?: string}};
-        expect(payload.data?.error).toBe("registration_disabled");
+        expect(payload.data?.error).not.toBe("registration_disabled");
 
         expect((await fetch(`${baseUrl}/api/auth/register/oauth`)).status).toBe(404);
         expect((await fetch(`${baseUrl}/auth/github`, {redirect: "manual"})).status).toBe(404);
+    });
+
+    it("显式关闭后注册接口保持稳定 403", async () => {
+        const disabledPort = port + 2;
+        const disabledUrl = `http://127.0.0.1:${disabledPort}`;
+        const env = productionEnv(disabledPort);
+        env.NUXT_PUBLIC_REGISTRATION_ENABLED = "0";
+        env.NB_LOG_FILE = join(runDir, "logs", "site-disabled.jsonl");
+        const child = spawn(process.execPath, [join(repoRoot, ".output", "server", "index.mjs")], {
+            cwd: repoRoot,
+            env,
+            stdio: "pipe",
+        });
+        try {
+            await waitUntilLiveAt(disabledUrl);
+            const register = await fetch(`${disabledUrl}/api/auth/register`, {method: "POST"});
+            expect(register.status).toBe(403);
+            const payload = (await register.json()) as {data?: {error?: string}};
+            expect(payload.data?.error).toBe("registration_disabled");
+        } finally {
+            child.kill();
+        }
     });
 
     it("设备码只返回 canonical HTTPS origin", async () => {
