@@ -2,17 +2,17 @@
 
 ## Summary
 
-NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已合并 `master` 并部署 DMIT。生产运行提交 `eb3fb96` 的不可变 digest `sha256:b86259be...`，两份 schema 0 Skill 已迁为 `1.0.0` / package schema 1；新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。当前部署提交 typecheck、build 与 141 项全量测试通过，桌面/移动端浏览器及 `linux/amd64` 运行约束沿用 Task 01 验收结果。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已部署 DMIT。生产运行提交 `65b84bc` 的不可变 digest `sha256:580bf3f7...`；新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。密码注册已独立开放，GitHub OAuth 继续关闭。
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
-密码注册门禁已拆为独立运行时开关，并通过 typecheck、production build、11 项配置单测与 24 项生产/账号集成测试；等待本次固定 digest 升级启用。
+密码注册门禁已拆为独立运行时开关，并通过 typecheck、production build、11 项配置单测与 24 项生产/账号集成测试；2026-07-31 已完成固定 digest 升级和公网验收。
 
 ## Product Facts
 
 - Nuxt 4 SPA + Nitro API；Prisma 7/libSQL SQLite；`nuxt-auth-utils` cookie session；zod DTO；`@notnotype/nb-ui` 固定公开 Git commit，不依赖 Bun link。
 - 密码注册由 `NUXT_PUBLIC_REGISTRATION_ENABLED` 独立控制；`NB_PRIVATE_MODE=1` 继续关闭 GitHub OAuth，不再连带关闭注册码注册。
-- 管理员 `RegistrationCode` 负责注册准入，用户 `InviteCode` 只记录可选邀请归属；两类码支持不限/限次、过期和停用，注册页可从链接同时预填。生产 owner-only 私有模式服务端仍关闭注册和 GitHub OAuth，前端隐藏入口。
+- 管理员 `RegistrationCode` 负责注册准入，用户 `InviteCode` 只记录可选邀请归属；两类码支持不限/限次、过期和停用，注册页可从链接同时预填。生产已开放密码注册；受限模式继续关闭 GitHub OAuth。
 - Backup 只接收 `NBOOKBK1` magic、`.nbbackup` 和 `application/vnd.neurobook.backup`；`sha256` 是密文字节摘要，`keyId` 只用于客户端选择密钥，站点无法解密。
 - 全站 Workshop + Backup 默认上限 6 GiB并保留 4 GiB 物理空间；两类上传共用串行容量门禁。Workshop 压缩包 20 MiB、解压 100 MiB、500 条目，并拒绝逃逸/重复路径和非法 manifest。
 - `GET /api/health/live` 只证明进程可响应；`GET /api/health/ready` 检查数据库、待应用 migration、数据库/Workshop/Backup 目录读写。容量耗尽只返回 degraded + HTTP 200。
@@ -40,7 +40,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| 密码注册生产门禁 | Ready for deploy | 注册开关与私有模式解耦，前端兼容 Nuxt boolean/string/number 运行时值；等待本次生产升级启用。 |
+| 密码注册生产门禁 | Deployed | 注册开关与私有模式解耦，前端兼容 Nuxt boolean/string/number 运行时值；生产运行时为 `registrationEnabled: 1`，GitHub OAuth 仍为 404。 |
 | Initial Template | Done | Base fullstack skeleton is available. |
 | Workshop 后端第一版 | Done | schema + 迁移 + DTO + API v1 + 邀请码注册 + zip 上传/下载 + 社交互动 + admin 管理；实现后审查修复并发窗口（邀请码双花、同版本上传先写库后落盘、slug 抢注 409）、下架条目可撤销收藏/点赞、meta 补 platformVersion；40 测试全绿（含 20 个真实 HTTP 集成用例，含并发用例）。 |
 | Workshop Web 前端 | Done | 全量页面一次做完：`/`（筛选态映射 URL query）、`/items/:slug`（双栏 + sticky 下载栏 + 点赞/收藏乐观更新 + 举报 + 评论区 + 404 态）、`/users/:username`、`/publish`（四步向导 + 前端 fflate 解析 manifest + 重试防 slug 409）、`/me`（发布/收藏两 Tab）、`/admin`（邀请码/举报/条目管理）、`/login`+`/register`（补邀请码）。类型化 `useWorkshopApi` 单一 $fetch 出口；icons 走 unocss module flag；description 纯文本防 XSS。**后端补口** `GET /api/v1/me/items`（本人全部状态条目，含 unlisted）。typecheck / build 全绿，测试 40→41（新增 `/me/items` 集成用例）。未做浏览器验证。 |
@@ -51,7 +51,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 | nb-ui 深模块化跟进 | Done | 跟随 nb-ui 优化轮 3 的消费方收敛：`app/theme/themes.ts` 145 行全量复制 → re-export 垫片；`useTheme.ts` 67 行 → `createThemeStore({storageKey: "nb-workshop-theme"})` 8 行垫片；`uno.config.ts` safelist 改 `[...NB_UI_ICON_SAFELIST]`（来自 `@notnotype/nb-ui/uno`，顺带补上此前漏掉的 grip-vertical）。typecheck 绿；浏览器实测 :3003 图标渲染与调色板切 Dracula 持久化正常。 |
 | Passport 与 Backup（Task 112 A+B） | Done | 官方站点改造第一轮：Prisma 四表（PassportDeviceCode/PassportAuthorization/PassportToken/InstanceBackup）；设备码流三端点（`device/code`、`token` 状态机含 slow_down/轮换/重放撤链、`revoke`）+ /link 页三端点 + 授权管理三端点；`requireAccess(event, scope)` 统一守卫，items POST / versions POST / items PATCH / me/items GET 四端点 Bearer 化（`requireOwnedItem` 加可选 user 参数），admin/社交面不接受 Bearer；Backup 五端点（busboy 流式上传边写边算 sha256 + 交互事务配额 + rotate 只淘汰同 label auto + sendStream 下载带 `x-nb-sha256`），配额三 env（`NB_BACKUP_*`）；前端 /link 批准页、me.vue 四 tab（新增已连接实例 PassportAuthorizationPanel / 云备份 BackupPanel）、登录页 `?redirect=` 回跳、useWorkshopApi 扩展。时序常量 env 可覆写（`NB_PASSPORT_*`）供测试稳定时序。新增 `tests/passport-backup.integration.test.ts`（19 用例：设备码全状态机/轮换撤链/Bearer scope 面/备份往返配额 rotate/限流 429），全量 72 测试绿。未做浏览器验证。 |
 | 账号第二轮：GitHub OAuth + Profile + Admin 后台（Task 119） | Done | ① GitHub OAuth（spec §5.2 落地）：`PassportIdentity` 表 + `passwordHash` 转可空（null=OAuth 免密账号）；`/auth/github` 单路由三分支（已绑定登录[封禁拦截]/已登录绑定[头像顺手带入]/未登录进补全注册），决策抽 `resolveGitHubSignIn` 纯函数单测；pending 身份走 sealed session cookie（`setAuthSession` 改 replace 语义顺带清残留）；补全注册 `GET/POST /api/auth/register/oauth`（邀请码闸门保留，免设密码）+ `/register/github` 补全页（register.vue 移入 register/index.vue 防嵌套路由空白）；身份管理 `GET/DELETE /api/v1/passport/identities`（无密码禁解绑防失联）。② Profile：User 加 avatarUrl/bio/websiteUrl，`GET/PATCH /api/v1/me/profile`（avatarUrl 限 http(s) 防 javascript: 注入，成功刷新会话）；ItemAuthorDto/PublicUserDto/AuthUserDto 透出 avatarUrl；新 `UserAvatar.vue`（img 失败回落首字母色块）吃遍顶栏/卡片/详情/评论/作者页；me.vue 第 5 tab「账号设置」=`AccountSettingsPanel.vue`（资料表单/GitHub 绑定区/密码区）。③ 修改密码 `POST /api/v1/me/password`：验旧密或免密补设；sessionVersion+1 踢其他设备后重写当前会话保活。④ 防爆破（门 A 债消）：login 10 次/5min/IP+用户名、register（含 oauth）5 次/时/IP、改密 5 次/时/用户，额度 env 可覆写（`NB_LOGIN/REGISTER/PASSWORD_RATE_LIMIT`）。⑤ Admin 后台六 tab（概览/邀请码/举报/条目/用户/备份，新面板抽 `app/components/admin/`）：用户管理（搜索分页/封禁=disabled+sessionVersion+1 即时踢线且 Bearer 面同步拒/角色变更同样踢线重登/self-guard 防锁死）、站点统计 `admin/stats`、备份用量 `admin/backup-usage`+行明细+admin 删除、邀请码 note 字段+全量列表过滤。测试 72→94（`github-oauth.test.ts` 纯函数 7 用例 + `account-admin.integration.test.ts` 15 用例；旧文件补 `NB_REGISTER_RATE_LIMIT` 环境防限流误伤）。真实 GitHub 回调需浏览器验收（env `NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET`，回调地址 `/auth/github`）。 |
-| 注册码与邀请码分离（Task 119 follow-up） | Done | 管理员注册码负责准入，用户邀请码只记录可选归属；两类码支持不限/限次、过期、备注与停用。密码/OAuth 注册共用事务内 CAS 消费；旧一次性邀请码迁为不限次数注册码。`/admin` 支持签发/设置/复制链接，`/me` 增“邀请好友”，`/register` 可预填双参数。typecheck、build 与 123 项全量测试通过；未做浏览器验证，生产注册仍关闭。 |
+| 注册码与邀请码分离（Task 119 follow-up） | Done | 管理员注册码负责注册准入，用户邀请码只记录可选归属；两类码支持不限/限次、过期、备注与停用。密码注册与私有模式已解耦，生产注册码注册已开放；GitHub OAuth 仍关闭。 |
 | 官方站生产化与部署（Task 128） | In Progress | 代码、公开仓库/GHCR、`arch` 隔离容器验证、DMIT loopback、DNS/证书和 Nginx stream 443 均已完成；固定 digest、容器/主机重启、冷快照恢复和镜像回滚已演练。`deploy:dmit` 已通过真实 push、Actions、digest、冷快照升级和幂等重跑；首次 CLI 兼容失败在 DMIT 写入前停止并已修复。待既有 Xray 客户端确认、真实 NeuroBook 闭环和 canary 发布。 |
 | Agent 资产工作台（Task 01） | Deployed | 三类统一包、SemVer/ordinal、AST 校验、有界 ZIP、可恢复两步发布、归档一致性与迁移 guard 已部署。`nb-ui` 54 项测试 + typecheck/build；部署提交 20 文件/141 测试、typecheck/build、真实 HTTP、桌面/移动端 Playwright 与 `linux/amd64` 运行约束均通过；生产两份旧 Skill 已迁为 schema 1。 |
 

@@ -157,3 +157,12 @@ admin：`create/list/updateRegistrationCode` 管理注册码，另有 `listRepor
 - 本轮只修改 `dev` 代码、示例和验证，不提交、不推送、不部署，也不改 DMIT 环境。线上链接继续保持关闭，直到后续发布新镜像并在 DMIT 设置 `NUXT_PUBLIC_REGISTRATION_ENABLED=1`。
 - 验证实际结果：首次生产测试发现 Nuxt 会把环境值 `1` 注入为数字 `1`，不是预想的字符串；共享解析器因此扩为 `boolean | string | number` 并增加 `1/0` 回归。隔离 `dev` 提交并只应用本补丁后，typecheck、build、运行时/配置/生产双门禁 19 项及账号管理 16 项通过；`api-v1` 25 项中与注册有关的用例均通过，最后 2 个既有 Workshop 用例稳定超时。主工作区检查另被在途的 TypeScript 7 / vue-tsc 不兼容和 Workshop 缺失导出阻断，均未在本任务中改动。
 - 与原计划的出入：没有执行全量绿灯，因为当前 `dev` 在途改动存在上述两个独立基线问题；没有执行浏览器验收、提交、推送、DMIT 环境修改或生产部署，符合本轮边界。
+
+## 2026-07-31 注册门禁生产部署
+
+- 公网复现确认 `/register` 带不带 query 都返回 HTTP 200，旧页面公开配置为 `registrationEnabled:false`，挂载后由前端 `replace` 跳到 `/login`；旧注册 API 同时返回 `403 registration_disabled`。注册码本身没有参与这次失败。
+- 修复以 `dev` 提交 `d279a3a` 保存开发线，再合并为 `master` 提交 `65b84bc`。本地 typecheck、production build、11 项运行时/配置单测与 24 项生产门禁/账号集成测试通过；Actions Run `30623487821` 全部成功。
+- DMIT 使用不可变 digest `sha256:580bf3f74bc51661d5541b0290c9675f523325e3c3b5e054bf0c3ca57b09b4b2` 完成升级；停站前 Agent 资产 preflight 为 `checked=2 / migrated=0`，冷快照为 `ops/deployments/20260731T102913Z/data.before.tar`。
+- 新镜像 readiness 通过后才原子写入唯一的 `NUXT_PUBLIC_REGISTRATION_ENABLED=1` 并重建同一 digest 容器；配置备份为 `ops/deployments/20260731T103001Z-registration/env.before`。公网页面现为 `registrationEnabled:1`，空注册请求进入正常 DTO 校验返回 400，GitHub OAuth 继续返回 404。
+- Pino stdout 与 `/logs/site.jsonl` 均记录 `/register` 200、注册 API 400 和 OAuth 404，请求 query 未进入日志。仓库规则不允许自动浏览器验收，因此本轮没有代替用户提交真实注册表单；真实注册码没有被测试消耗。
+- 实际偏差：一次性远端配置脚本在全部配置、重建和 readiness 步骤完成后，因 Windows CRLF 在末尾多报一条 `$'\\r': command not found`。独立检查确认环境变量、容器 digest、内外 readiness 和日志均正确；临时脚本已删除，没有将该执行方式纳入仓库运维入口。
