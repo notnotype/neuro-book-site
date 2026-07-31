@@ -15,7 +15,7 @@
 
 ## Current State
 
-- 2026-07-31：实现、151 项测试、typecheck、production build 与本地桌面/移动端 Playwright 已通过，等待提交、CI 容器验证和生产部署。
+- 2026-07-31：实现、151 项测试、typecheck、production build、桌面/移动端 Playwright、Actions 容器门禁与 DMIT 固定 digest 部署均已通过。
 - `username` 继续作为登录名、个人主页路径和作者引用，只允许 3–32 位 ASCII 字母、数字、下划线或连字符；`displayName` 为必填的 1–50 字符 Unicode 公开名称。
 - `User.displayName` 原本已存在，无需数据库迁移；普通注册和 GitHub 补全注册现在都保存用户提交的显示名称。
 - GitHub OAuth 在生产继续关闭；本轮只完成补全页与接口的可用实现和自动化验证，不改变开关。
@@ -60,6 +60,7 @@
 - `bun run typecheck`：通过。
 - `bun run build`：通过；仅有既有 sourcemap、依赖注解、大 TypeScript 懒加载 chunk 和 Node 依赖弃用警告。
 - `git diff --check`：通过；Git 仅报告当前 Windows worktree 的 LF/CRLF 转换提示。
+- GitHub Actions Run `30633965111`：frozen install、typecheck、production build、全量测试和 `linux/amd64` Buildx 推送全部通过。
 - 覆盖中文显示名称、中文账号名拒绝、长度边界、确认密码、结构化 issue 不泄露输入、普通/OAuth DTO、显示名称持久化、用户名冲突和邀请码事务回滚。
 - i18n 合同覆盖语言键一致、所有入口浏览器语言检测、Cookie key、英文三类资产模板，以及前端禁止读取服务端原始 message。
 
@@ -72,9 +73,18 @@
 - 新 `en-US` 浏览器上下文首次直接打开无前缀页面时自动选择英文并写 Cookie；默认 `zh-CN` 浏览器上下文选择简体中文。
 - 发布工作台切换语言后 URL、包名与既有英文模板内容保持不变；离开未保存草稿仍触发确认。
 
+### Production Deployment
+
+- source commit：`475cd74a808289f3515c699ed540bf5d0b586c41`。
+- 新镜像：`ghcr.io/notnotype/neuro-book-site@sha256:e9b0ee2079a4f3536546ffb2a45786ba0d1cb47c6b864dec3fdf1f7333d34d8d`；上一镜像为 `sha256:580bf3f74bc51661d5541b0290c9675f523325e3c3b5e054bf0c3ca57b09b4b2`。
+- 冷快照：`/srv/neuro-book-site/ops/deployments/20260731T132443Z/data.before.tar`；部署回执与上述 commit/digest 一致。
+- 公网 live / ready 均通过，数据库、migration、Agent 资产、三类持久目录与容量检查全部为 `ok`；容器 Docker health 为 `healthy`。
+- 生产注册页显示六个预期字段，注册码分享链接正常预填，GitHub 入口按私有模式隐藏；中英文切换保持 URL 与预填内容，Cookie 为 `Secure; SameSite=Lax; Path=/`，浏览器 0 console error / 0 warning。
+- Pino stdout 与持久文件都出现结构化请求；`/srv/neuro-book-site/logs/site.jsonl` 为 `0600`、`10001:10001`。生产验收没有提交注册表单，也没有创建测试账号。
+
 ## Deviations From Plan
 
-- 本机没有 Docker CLI，无法在 Windows 直接执行 `linux/amd64` 非 root 容器验证；该门禁由合入 `master` 后的 GitHub Actions container job 完成，未把本地 production build 冒充容器证据。
+- 本机没有 Docker CLI，无法在 Windows 直接执行 `linux/amd64` 非 root 容器验证；该门禁最终由 GitHub Actions container job 完成，未把本地 production build 冒充容器证据。
 - 生产保持 GitHub OAuth 关闭，因此没有在真实 GitHub OAuth App 上执行回调验收；补全注册接口、事务和页面通过测试覆盖。
 - `@nuxtjs/i18n` 自带 Cookie 管理已经满足一年有效期、Path、SameSite 与生产 Secure 合同，没有再写一套自定义 Cookie 插件。
 - 本轮未修改 nb-ui；当前站点使用的组件都能从业务层传入 label/slot。
@@ -90,6 +100,6 @@
 
 ## TODO / Follow-ups
 
-- [ ] GitHub Actions 完成 frozen install、测试、typecheck、build 与 `linux/amd64` 镜像构建。
-- [ ] 部署固定 GHCR digest 后记录 Actions run、digest、冷快照和公网 smoke。
+- [x] GitHub Actions 完成 frozen install、测试、typecheck、build 与 `linux/amd64` 镜像构建。
+- [x] 部署固定 GHCR digest，并记录 Actions run、digest、冷快照和公网 smoke。
 - [ ] 未来启用 GitHub OAuth 时，用真实 OAuth App 单独验收回调、补全注册与错误回跳。
