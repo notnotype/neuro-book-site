@@ -4,7 +4,7 @@ import {Prisma, PrismaClient} from "../generated/prisma/client";
 
 export type {PrismaClient};
 export {Prisma};
-export type {User, UserRole, UserStatus, InviteCode, WorkshopItem, ItemVersion, Like, Favorite, Comment, Report, PassportDeviceCode, PassportAuthorization, PassportToken, InstanceBackup} from "../generated/prisma/client";
+export type {User, UserRole, UserStatus, InviteCode, WorkshopItem, ItemVersion, Like, Favorite, Comment, Report, PassportDeviceCode, PassportAuthorization, PassportToken, InstanceBackup, OAuthClient, OAuthAuthorizationCode, OAuthAccessToken} from "../generated/prisma/client";
 
 type GlobalPrisma = {
     prismaClient?: PrismaClient;

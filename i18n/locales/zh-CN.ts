@@ -205,6 +205,17 @@ export default {
         disabled: "该账号已被封禁，无法登录",
         oauthFailed: "GitHub 登录失败，请重试",
     },
+    oauthAuthorize: {
+        title: "账号授权",
+        description: "llmlint-web 请求读取你的 NeuroBook 账号资料，用于在文风盲评站建立登录会话。",
+        loading: "正在读取授权请求…",
+        profileScope: "读取账号名和显示名称",
+        account: "当前账号：{displayName}（{username}）",
+        approve: "允许",
+        deny: "拒绝",
+        loadFailed: "授权请求无效或已过期。",
+        actionFailed: "授权处理失败，请返回来源网站重试。",
+    },
     account: {
         profile: "个人资料",
         accountNameDescription: "账号名用于登录和主页地址，不能修改。",

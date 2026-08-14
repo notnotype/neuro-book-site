@@ -2,7 +2,7 @@
 
 本文只覆盖应用容器。DMIT 的 DNS、证书、Nginx stream 和 Xray 443 切换必须使用 Task 128 单独的维护窗口 runbook，不能仅按本文直接改公网入口。
 
-截至 2026-07-28，`deploy:dmit` 首次端到端升级已通过：提交 `311bfd0` 的 Actions Run `30323712154` 全绿，公开 GHCR digest `sha256:8261351c2e26e2f62d3fea386a5301cccf79bd62acb1d161a62558b371f24ea0` 从上一 digest `sha256:6ec29b03a086920e9259f18a4ed8403b7c188002c8d57d1f037a7fbad118c726` 完成冷快照升级，快照为 `/srv/neuro-book-site/ops/deployments/20260728T024146Z/data.before.tar`。同一命令第二次运行正确识别目标 digest 并幂等退出，没有停站或创建第二份快照。此处只记录首轮证据；当前线上 digest、source commit 和对应快照以服务器最新 `ops/deployments/*/deployment.txt` 为动态真相，不在源码文档中每次自引用更新。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已部署 DMIT。新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。密码注册已独立开放，GitHub OAuth 继续关闭；Task 02 的账号显示名称、中英双语、认证表单与开关链路收口均已部署并完成公网验收。t133 正在加入固定第一方 client 的 OAuth Authorization Code + S256 PKCE provider，尚未完成生产切换。
 
 ## 目录与权限
 
@@ -61,6 +61,22 @@ unset ADMIN_INPUT
 ```
 
 随后在 loopback 完成登录、设备码、Workshop、加密备份上传/下载和恢复 smoke。公网反代未接入前不要改 DNS。
+
+## llmlint OAuth client 初始化
+
+官方站只保存 llmlint client secret 的不可逆摘要；同一份 secret 还必须写入 llmlint DMIT 的 `/srv/llmlint/secrets/web.env`。先在密码管理器中生成并保存至少 32 个字符的随机 secret，再用 stdin 执行一次性幂等初始化，不要把 secret 放进命令参数、镜像环境变量或日志：
+
+```bash
+read -r -s -p "llmlint OAuth client secret: " OAUTH_CLIENT_SECRET
+printf '\n'
+printf '%s\n' "$OAUTH_CLIENT_SECRET" | sudo docker compose exec -T site \
+  node /app/dist/oauth-client.mjs --ensure llmlint-web
+unset OAUTH_CLIENT_SECRET
+```
+
+命令只会创建或更新固定的 `llmlint-web` client，redirect URI 固定为 `https://llmlint.notnotype.com/auth/neurobook`，scope 固定为 `profile`。初始化前必须先确认当前容器已由 entrypoint 完成 Prisma migration；初始化后再把同一 secret 写入 llmlint 的生产 secret 文件并启动 llmlint 服务。
+
+ [C:/Users/notnotype/Documents/CodeRepository/GithubProjects/neuro-book-site/.worktree/t133-neurobook-oauth/PROJECT-STATUS.md#7AF9]
 
 ## 管理员密码维护
 
