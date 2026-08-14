@@ -70,6 +70,11 @@ describe("site logger", () => {
         expect(safe.message).not.toContain(recoveryCode);
         expect(redactSensitiveText("registrationCode=REG-SECRET inviteCode=INV-SECRET"))
             .toBe("registrationCode=[REDACTED] inviteCode=[REDACTED]");
+        const oauth = redactSensitiveText("authorization=Basic dGVzdA== code=nb_oac_secret code_verifier=verifier-secret code_challenge=challenge-secret client_secret=client-secret");
+        expect(oauth).not.toContain("dGVzdA==");
+        expect(oauth).not.toContain("verifier-secret");
+        expect(oauth).not.toContain("challenge-secret");
+        expect(oauth).not.toContain("client-secret");
     });
 
     it("日志级别只接受公开枚举，非法值安全回退 info", () => {

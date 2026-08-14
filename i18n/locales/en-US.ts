@@ -205,6 +205,17 @@ export default {
         disabled: "This account is disabled and cannot sign in.",
         oauthFailed: "GitHub sign-in failed. Try again.",
     },
+    oauthAuthorize: {
+        title: "Account authorization",
+        description: "llmlint-web requests your NeuroBook profile so the style review site can create its own signed-in session.",
+        loading: "Loading authorization request…",
+        profileScope: "Read account name and display name",
+        account: "Current account: {displayName} ({username})",
+        approve: "Allow",
+        deny: "Deny",
+        loadFailed: "The authorization request is invalid or expired.",
+        actionFailed: "Authorization failed. Return to the source site and try again.",
+    },
     account: {
         profile: "Profile",
         accountNameDescription: "Your account name is used for sign-in and your profile URL, and cannot be changed.",

@@ -46,6 +46,8 @@ model User {
   passportAuthorizations PassportAuthorization[]
   passportIdentities     PassportIdentity[]
   backups                InstanceBackup[]
+  oauthAuthorizationCodes OAuthAuthorizationCode[]
+  oauthAccessTokens      OAuthAccessToken[]
 
   @@index([role, status])
   @@index([updatedAt])
@@ -299,4 +301,59 @@ model InstanceBackup {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId, createdAt])
+}
+
+// ---------- First-party OAuth provider ----------
+
+// llmlint 等第一方 Web client；secret 只保存 scrypt 摘要。
+model OAuthClient {
+  clientId    String   @id
+  secretHash  String
+  redirectUri String
+  scopesJson  String
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  authorizationCodes OAuthAuthorizationCode[]
+  accessTokens       OAuthAccessToken[]
+}
+
+// 一次性 Authorization Code；code 明文只在请求内存中，库内保存 SHA-256。
+model OAuthAuthorizationCode {
+  id                  Int      @id @default(autoincrement())
+  codeHash            String   @unique
+  clientId            String
+  userId              Int
+  redirectUri         String
+  scopeJson           String
+  codeChallenge       String
+  codeChallengeMethod String
+  status              String   @default("active")
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime @default(now())
+
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, status, expiresAt])
+  @@index([userId, createdAt])
+}
+
+// 短时 opaque access token；只保存 SHA-256，不支持 refresh token。
+model OAuthAccessToken {
+  id         Int      @id @default(autoincrement())
+  tokenHash  String   @unique
+  clientId   String
+  userId     Int
+  scopeJson  String
+  status     String   @default("active")
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, expiresAt])
 }

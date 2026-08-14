@@ -5,8 +5,8 @@ import {SITE_LOG_LEVELS, type SiteLogLevel} from "./site-config";
 
 const REDACTED = "[REDACTED]";
 const MAX_LOG_TEXT_LENGTH = 12_000;
-const SENSITIVE_LABEL = "api[-_ ]?key|apikey|authorization|cookie|set-cookie|password|token|secret|credential|access[-_ ]?token|refresh[-_ ]?token|device[-_ ]?code|user[-_ ]?code|registration[-_ ]?code|invite[-_ ]?code|recovery[-_ ]?code|backup[-_ ]?key|backup[-_ ]?keyring";
-const SENSITIVE_VALUE_LABEL = "api[-_ ]?key|apikey|password|token|secret|credential|access[-_ ]?token|refresh[-_ ]?token|device[-_ ]?code|user[-_ ]?code|registration[-_ ]?code|invite[-_ ]?code|recovery[-_ ]?code|backup[-_ ]?key|backup[-_ ]?keyring";
+const SENSITIVE_LABEL = "api[-_ ]?key|apikey|authorization|cookie|set-cookie|password|token|secret|credential|access[-_ ]?token|refresh[-_ ]?token|authorization[-_ ]?code|code[-_ ]?(?:verifier|challenge)|client[-_ ]?secret|device[-_ ]?code|user[-_ ]?code|registration[-_ ]?code|invite[-_ ]?code|recovery[-_ ]?code|backup[-_ ]?key|backup[-_ ]?keyring";
+const SENSITIVE_VALUE_LABEL = "api[-_ ]?key|apikey|password|token|secret|credential|access[-_ ]?token|refresh[-_ ]?token|authorization[-_ ]?code|code[-_ ]?(?:verifier|challenge)|client[-_ ]?secret|device[-_ ]?code|user[-_ ]?code|registration[-_ ]?code|invite[-_ ]?code|recovery[-_ ]?code|backup[-_ ]?key|backup[-_ ]?keyring";
 
 export type SafeLogError = {
     name: string;
@@ -139,10 +139,12 @@ export function redactSensitiveText(input: string): string {
         .replace(/(\bauthorization\s*[:=]\s*)(?!(?:Bearer|Basic)\b)[^\s,;}]+/giu, `$1${REDACTED}`)
         .replace(new RegExp(`\\b(cookie|set-cookie)\\s*[:=]\\s*[^\\r\\n]+`, "giu"), `$1=${REDACTED}`)
         .replace(new RegExp(`(\\b(?:${SENSITIVE_VALUE_LABEL})\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|[^\\s,;}]+)`, "giu"), `$1${REDACTED}`)
+        .replace(/\b(?:client_id|redirect_uri|response_type|scope|state|code_challenge|code_challenge_method|grant_type|code|code_verifier|access_token|refresh_token)=[^&\s]+/giu, REDACTED)
         .replace(/\bNBK1-[A-Za-z0-9_-]{43}-[0-9a-f]{8}\b/gu, REDACTED)
         .replace(/\b(?:nbp_(?:dc|at|rt)_|sk-)[A-Za-z0-9_-]{8,}\b/giu, REDACTED)
         .slice(0, MAX_LOG_TEXT_LENGTH);
 }
+
 
 /** 把未知异常压缩为允许进入日志的固定字段。 */
 export function safeLogError(error: unknown): SafeLogError {
@@ -179,8 +181,8 @@ function prepareLogFile(filePath: string): void {
 function sensitiveLogPaths(): string[] {
     const keys = [
         "authorization", "cookie", "password", "token", "secret", "credential",
-        "accessToken", "refreshToken", "deviceCode", "userCode", "registrationCode",
-        "inviteCode", "recoveryCode", "backupKey", "backupKeyring",
+        "accessToken", "refreshToken", "authorizationCode", "codeVerifier", "codeChallenge", "clientSecret",
+        "deviceCode", "userCode", "registrationCode", "inviteCode", "recoveryCode", "backupKey", "backupKeyring",
     ];
     return keys.flatMap((key) => [key, `*.${key}`, `*.*.${key}`]);
 }
