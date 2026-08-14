@@ -13,7 +13,7 @@
 
 ## Current State
 
-工作树已实现 provider、数据库 migration、OAuth client 初始化工具和 llmlint S256 PKCE 回调。官方线上尚未切换到该版本：公网 metadata 当前仍返回 Nuxt HTML，线上 SQLite 尚无 `OAuthClient` 表；llmlint DMIT 正式 unit、TLS vhost 和 443 stream 尚未启用。
+代码已提交并推送：官方 PR [#1](https://github.com/notnotype/neuro-book-site/pull/1) 检查通过；llmlint PR [#3](https://github.com/notnotype/llmlint/pull/3) 检查通过。官方线上尚未切换到该版本：公网 metadata 当前仍返回 Nuxt HTML，线上 SQLite 尚无 `OAuthClient` 表；llmlint DMIT 正式 unit、TLS vhost 和 443 stream 尚未启用。
 
 ## Decisions / Discussion
 
@@ -40,7 +40,7 @@
 
 ## TODO / Follow-ups
 
-- 双仓提交、push 并创建 PR。
+- 合并双仓 PR（当前 PR #1 / PR #3 均 OPEN、检查通过；不由 Agent 自行合并）。
 - 官方站部署 migration 和新镜像，初始化 `llmlint-web` client。
 - 写入 llmlint DMIT secret，安装正式 Node unit、Nginx/TLS/stream 并验证公网 metadata。
 - 真实浏览器完成一次 SSO 登录，确认本地用户映射与管理员权限。
