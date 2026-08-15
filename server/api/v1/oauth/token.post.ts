@@ -6,6 +6,7 @@ import {
     applyOAuthResponse,
     createOAuthRequest,
     headerValues,
+    normalizeClientSecretBasicAuthorization,
     oauthErrorPayload,
     readUniqueFormBody,
     readUniqueQuery,
@@ -33,7 +34,10 @@ export default defineEventHandler(async (event) => {
     }
 
     const authorizationValues = headerValues(event, "authorization");
-    if (authorizationValues.length !== 1 || !/^Basic\s+[A-Za-z0-9+/]+={0,2}$/u.test(authorizationValues[0] ?? "")) {
+    const normalizedAuthorization = authorizationValues.length === 1
+        ? normalizeClientSecretBasicAuthorization(authorizationValues[0] ?? "")
+        : null;
+    if (!normalizedAuthorization) {
         return tokenError(event, 401, "invalid_client", "Client authentication is required", true);
     }
     const contentType = getRequestHeader(event, "content-type") ?? "";
@@ -63,7 +67,7 @@ export default defineEventHandler(async (event) => {
         return tokenError(event, 400, "invalid_client", "Use only client_secret_basic authentication");
     }
 
-    const request = createOAuthRequest(event, query, body);
+    const request = createOAuthRequest(event, query, body, {authorization: normalizedAuthorization});
     const response = new OAuth2Server.Response();
     try {
         await oauthServer.token(request, response);
