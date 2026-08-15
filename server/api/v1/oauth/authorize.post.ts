@@ -1,4 +1,4 @@
-import {getRequestURL, readBody} from "h3";
+import {getRequestHeader, getRequestURL, readBody} from "h3";
 import OAuth2Server from "@node-oauth/oauth2-server";
 import {requireCurrentUser} from "../../../utils/auth";
 import {oauthServer, toOAuthUser} from "../../../utils/oauth";
@@ -6,9 +6,10 @@ import {
     applyOAuthResponse,
     createOAuthRequest,
     headerValues,
+    readUniqueFormBody,
     readUniqueQuery,
 } from "../../../utils/oauth-transport";
-import {readApprovalBody, validateAuthorizeQuery} from "../../../utils/oauth-authorize";
+import {readApprovalBody, readApprovalFormBody, validateAuthorizeQuery} from "../../../utils/oauth-authorize";
 import {clientIp, siteOrigin} from "../../../utils/site-config";
 import {consumeRateLimit, envRateLimit} from "../../../utils/rate-limit";
 import {apiError} from "../../../utils/api-error";
@@ -33,7 +34,15 @@ export default defineEventHandler(async (event) => {
     const user = await requireCurrentUser(event);
     const query = readUniqueQuery(event);
     validateAuthorizeQuery(query);
-    const allowed = readApprovalBody(await readBody(event));
+    const contentType = getRequestHeader(event, "content-type") ?? "";
+    let allowed: boolean;
+    if (/^application\/json(?:\s*;|$)/iu.test(contentType)) {
+        allowed = readApprovalBody(await readBody(event));
+    } else if (/^application\/x-www-form-urlencoded(?:\s*;|$)/iu.test(contentType)) {
+        allowed = readApprovalFormBody(await readUniqueFormBody(event));
+    } else {
+        throw apiError(415, "unsupported_media_type", "OAuth authorization approval requires JSON or form encoding");
+    }
     const request = createOAuthRequest(event, query, {allowed: allowed ? "true" : "false"});
     const response = new OAuth2Server.Response();
     const authenticateHandler = {

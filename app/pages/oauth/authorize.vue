@@ -4,7 +4,6 @@ import {onMounted, ref} from "vue";
 definePageMeta({middleware: "auth"});
 const {t} = useI18n();
 const {resolve} = useLocalizedApiError();
-const notification = useNotification();
 useHead({title: computed(() => t("oauthAuthorize.title"))});
 
 type AuthorizationDetails = {
@@ -38,31 +37,26 @@ async function loadDetails(): Promise<void> {
     }
 }
 
-async function decide(allowed: boolean): Promise<void> {
+function submitDecision(allowed: boolean): void {
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = `/api/v1/oauth/authorize${queryString.value}`;
+    form.enctype = "application/x-www-form-urlencoded";
+    form.hidden = true;
+
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "allowed";
+    input.value = String(allowed);
+    form.append(input);
+    document.body.append(form);
+    form.submit();
+}
+
+function decide(allowed: boolean): void {
     acting.value = true;
     errorMsg.value = "";
-    try {
-        const response = await fetch(`/api/v1/oauth/authorize${queryString.value}`, {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {Accept: "application/json", "Content-Type": "application/json"},
-            body: JSON.stringify({allowed}),
-            redirect: "manual",
-        });
-        const location = response.headers.get("location");
-        if (response.status >= 300 && response.status < 400 && location) {
-            window.location.assign(location);
-            return;
-        }
-        if (!response.ok) {
-            throw await response.json();
-        }
-        throw new Error("OAuth authorization did not redirect");
-    } catch (error) {
-        notification.error(resolve(error, "oauthAuthorize.actionFailed"));
-    } finally {
-        acting.value = false;
-    }
+    submitDecision(allowed);
 }
 
 onMounted(() => {

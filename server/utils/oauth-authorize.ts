@@ -42,3 +42,13 @@ export function readApprovalBody(body: unknown): boolean {
     }
     return record.allowed;
 }
+
+/** 读取授权确认页的 URL 编码表单；只接受唯一的 true/false 字符串。 */
+export function readApprovalFormBody(body: Record<string, string>): boolean {
+    if (Object.keys(body).length !== 1
+        || !Object.prototype.hasOwnProperty.call(body, "allowed")
+        || (body.allowed !== "true" && body.allowed !== "false")) {
+        throw apiError(400, "validation_failed", "Approval form must contain only allowed=true|false");
+    }
+    return body.allowed === "true";
+}

@@ -214,8 +214,8 @@ describe("官方 OAuth provider", () => {
         const approved = await request(`/api/v1/oauth/authorize${query}`, {
             method: "POST",
             jar: adminJar,
-            headers: {"Content-Type": "application/json", Origin: baseUrl},
-            body: JSON.stringify({allowed: true}),
+            headers: {"Content-Type": "application/x-www-form-urlencoded", Origin: baseUrl},
+            body: new URLSearchParams({allowed: "true"}),
         });
         expect(approved.status).toBe(302);
         const location = approved.headers.get("location");
@@ -273,7 +273,7 @@ describe("官方 OAuth provider", () => {
         expect((await replay.json() as {error: string}).error).toBe("invalid_grant");
     });
 
-    it("拒绝缺失或错误 Basic、refresh grant、错误 verifier 与非官方 Origin", async () => {
+    it("拒绝缺失或错误 Basic、refresh grant、错误 verifier、非官方 Origin 与非法批准表单", async () => {
         const verifier = randomBytes(32).toString("base64url");
         const query = authorizeQuery(verifier, "state-integration-2");
         const missingOrigin = await request(`/api/v1/oauth/authorize${query}`, {
@@ -285,6 +285,22 @@ describe("官方 OAuth provider", () => {
         expect(missingOrigin.status).toBe(403);
         const countAfterOrigin = await db!.execute("SELECT COUNT(*) AS count FROM OAuthAuthorizationCode");
         expect(Number(countAfterOrigin.rows[0]?.count)).toBe(1);
+        const invalidForm = await request(`/api/v1/oauth/authorize${query}`, {
+            method: "POST",
+            jar: adminJar,
+            headers: {"Content-Type": "application/x-www-form-urlencoded", Origin: baseUrl},
+            body: new URLSearchParams({allowed: "yes"}),
+        });
+        expect(invalidForm.status).toBe(400);
+        const duplicateForm = await request(`/api/v1/oauth/authorize${query}`, {
+            method: "POST",
+            jar: adminJar,
+            headers: {"Content-Type": "application/x-www-form-urlencoded", Origin: baseUrl},
+            body: "allowed=true&allowed=false",
+        });
+        expect(duplicateForm.status).toBe(400);
+        const countAfterInvalidForms = await db!.execute("SELECT COUNT(*) AS count FROM OAuthAuthorizationCode");
+        expect(Number(countAfterInvalidForms.rows[0]?.count)).toBe(1);
 
         const noBasic = await request("/api/v1/oauth/token", {
             method: "POST",

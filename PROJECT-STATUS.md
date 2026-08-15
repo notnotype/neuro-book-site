@@ -2,7 +2,7 @@
 
 ## Summary
 
-NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已部署 DMIT。新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。密码注册已独立开放，GitHub OAuth 继续关闭；Task 02 的账号显示名称、中英双语、认证表单与开关链路收口均已部署并完成公网验收。t133 provider 与部署前置已完成，双仓 PR 已创建，尚未执行生产切换。
+NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的模块化单体。Task 01 的 Skill / Workflow / Profile 统一包、SemVer、文件浏览、完整包发布工作台、静态源码校验、有界 ZIP、首版草稿和可恢复迁移已部署 DMIT。新版 `@notnotype/nb-ui` FileTree 固定到公开 commit `291b2d6`。密码注册已独立开放，GitHub OAuth 继续关闭；Task 02 的账号显示名称、中英双语、认证表单与开关链路收口均已部署并完成公网验收。t133 provider 与 llmlint SSO 已切换到 DMIT 公网，首次真实授权失败已定位为 consent page 的跨站手动重定向处理，修复正在部署前验证。
 
 设计真相源：neuro-book 仓 `docs/tasks/88-workshop-platform/README.md`。
 
@@ -23,6 +23,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 - 生产镜像使用 Bun 1.3.14 构建、Node 24.13.0 trixie slim 运行；Compose 约束非 root UID 10001、只读根、tmpfs、768 MiB、仅 loopback 3100 与固定可信 bridge。
 - `bun run db:admin -- create|reset` 提供显式管理员密码维护；密码只从 stdin 读取，生产镜像内对应 `/app/dist/admin-password.mjs`，reset 会递增会话版本并注销旧会话。
 - Pino 请求日志固定输出到 stdout 与 `/logs/site.jsonl`，响应带 `X-Request-ID`；成功健康检查降噪，URL query、header/body 和凭据不进入日志。Docker 控制台保留 10 MiB x 3，持久文件按 20 MiB x 14 独立轮转。
+- 第一方 OAuth provider 固定 `llmlint-web`、`code` + S256 PKCE 与 `client_secret_basic`；授权确认页使用顶层表单导航跟随 302，批准端点只接受精确 Origin 和严格的 JSON/URL 编码批准体。
 - `bun run deploy:dmit` 提供本地 push → Actions → GHCR digest → DMIT 升级编排：只接受干净 `master` 和正确 origin，不自动 commit/force push；远端串行执行镜像拉取、4 GiB 余量门禁、冷快照、原子 `.env` 切换、双 readiness 与失败整数据回滚，不接触 DNS/Nginx/443/Xray。
 - 首轮真实升级已由提交 `311bfd0`、Actions Run `30323712154` 和 digest `sha256:8261351c...` 证明，上一 digest 为 `sha256:6ec29b03...`，冷快照在 `ops/deployments/20260728T024146Z/`；同 digest 重跑幂等且没有第二份快照。线上当前 digest/commit/snapshot 以最新 root-only `deployment.txt` 为动态真相。
 - 条目状态 `published / unlisted / removed`；非 published 对公开面（列表/详情/版本/下载/评论）一律 404。
@@ -57,7 +58,7 @@ NeuroBook 官方站：账号关联、创意工坊与客户端加密云备份的�
 | 账号第二轮：GitHub OAuth + Profile + Admin 后台（Task 119） | Done | ① GitHub OAuth（spec §5.2 落地）：`PassportIdentity` 表 + `passwordHash` 转可空（null=OAuth 免密账号）；`/auth/github` 单路由三分支（已绑定登录[封禁拦截]/已登录绑定[头像顺手带入]/未登录进补全注册），决策抽 `resolveGitHubSignIn` 纯函数单测；pending 身份走 sealed session cookie（`setAuthSession` 改 replace 语义顺带清残留）；补全注册 `GET/POST /api/auth/register/oauth`（邀请码闸门保留，免设密码）+ `/register/github` 补全页（register.vue 移入 register/index.vue 防嵌套路由空白）；身份管理 `GET/DELETE /api/v1/passport/identities`（无密码禁解绑防失联）。② Profile：User 加 avatarUrl/bio/websiteUrl，`GET/PATCH /api/v1/me/profile`（avatarUrl 限 http(s) 防 javascript: 注入，成功刷新会话）；ItemAuthorDto/PublicUserDto/AuthUserDto 透出 avatarUrl；新 `UserAvatar.vue`（img 失败回落首字母色块）吃遍顶栏/卡片/详情/评论/作者页；me.vue 第 5 tab「账号设置」=`AccountSettingsPanel.vue`（资料表单/GitHub 绑定区/密码区）。③ 修改密码 `POST /api/v1/me/password`：验旧密或免密补设；sessionVersion+1 踢其他设备后重写当前会话保活。④ 防爆破（门 A 债消）：login 10 次/5min/IP+用户名、register（含 oauth）5 次/时/IP、改密 5 次/时/用户，额度 env 可覆写（`NB_LOGIN/REGISTER/PASSWORD_RATE_LIMIT`）。⑤ Admin 后台六 tab（概览/邀请码/举报/条目/用户/备份，新面板抽 `app/components/admin/`）：用户管理（搜索分页/封禁=disabled+sessionVersion+1 即时踢线且 Bearer 面同步拒/角色变更同样踢线重登/self-guard 防锁死）、站点统计 `admin/stats`、备份用量 `admin/backup-usage`+行明细+admin 删除、邀请码 note 字段+全量列表过滤。测试 72→94（`github-oauth.test.ts` 纯函数 7 用例 + `account-admin.integration.test.ts` 15 用例；旧文件补 `NB_REGISTER_RATE_LIMIT` 环境防限流误伤）。真实 GitHub 回调需浏览器验收（env `NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET`，回调地址 `/auth/github`）。 |
 | 注册码与邀请码分离（Task 119 follow-up） | Done | 管理员注册码负责注册准入，用户邀请码只记录可选归属；两类码支持不限/限次、过期、备注与停用。密码注册与私有模式已解耦，生产注册码注册已开放；GitHub OAuth 仍关闭。 |
 | 官方站生产化与部署（Task 128） | In Progress | 代码、公开仓库/GHCR、`arch` 隔离容器验证、DMIT loopback、DNS/证书和 Nginx stream 443 均已完成；固定 digest、容器/主机重启、冷快照恢复和镜像回滚已演练。`deploy:dmit` 已通过真实 push、Actions、digest、冷快照升级和幂等重跑；首次 CLI 兼容失败在 DMIT 写入前停止并已修复。待既有 Xray 客户端确认、真实 NeuroBook 闭环和 canary 发布。 |
-| 官方站 OAuth provider 与 llmlint SSO（Task 133） | In Progress | provider 端点、OAuth migration、固定 `llmlint-web` client 初始化工具和 llmlint S256 PKCE 回调已提交 PR #1；官方 PR 检查通过。线上仍是旧镜像：公网 metadata 返回 Nuxt HTML，尚无 `OAuthClient` 表；待合并后按 runbook 升级 provider、初始化 client 并切换 llmlint。 |
+| 官方站 OAuth provider 与 llmlint SSO（Task 133） | In Progress | provider、固定 `llmlint-web` client、llmlint S256 PKCE 回调和 DMIT 公网切换均已完成；真实批准阶段确认浏览器 `fetch` 手动重定向会得到 `opaqueredirect`，本分支已改为顶层表单 POST并补充表单边界测试，待合入部署后复验 callback 与 20 份盲评。
 | Agent 资产工作台（Task 01） | Deployed | 三类统一包、SemVer/ordinal、AST 校验、有界 ZIP、可恢复两步发布、归档一致性与迁移 guard 已部署。`nb-ui` 54 项测试 + typecheck/build；部署提交 20 文件/141 测试、typecheck/build、真实 HTTP、桌面/移动端 Playwright 与 `linux/amd64` 运行约束均通过；生产两份旧 Skill 已迁为 schema 1。 |
 | 账号名称与中英双语（Task 02） | Deployed | 首轮显示名称和中英双语已部署；审查收口进一步移除浏览器原生校验抢占、认证成功后的重复 session 请求和 GitHub pending 错误误判，并把密码注册/OAuth 路由门禁解耦。162 项测试、typecheck、production build、桌面/移动端 Playwright、Actions `linux/amd64` 和 DMIT 固定 digest 升级均已通过。 |
 
