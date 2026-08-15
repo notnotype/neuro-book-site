@@ -13,7 +13,7 @@
 
 ## Current State
 
-官方 provider 与 llmlint SSO 已在 DMIT 公网切换完成；公网 metadata、health、443 SNI 和 31445 直连门禁均已验收。首次真实授权批准时发现 consent page 使用 `fetch(..., redirect: "manual")` 读取跨站 302，浏览器返回 `opaqueredirect`（status 0、无 `Location`），因此 callback 未到达；本修复改为顶层表单 POST，待合入后重新部署并完成真实闭环。
+官方 provider 与 llmlint SSO 已在 DMIT 公网切换完成；consent navigation 修复已随官方 PR [#2](https://github.com/notnotype/neuro-book-site/pull/2) 的提交 `36249a6` 部署。真实浏览器随后确认 callback 已到达 llmlint，但 token 交换返回 401：`openid-client` 按 RFC 6749 对 Basic 中的 client secret 做表单编码，`@node-oauth/oauth2-server` 5.3.0 未逆解码；本修复在 provider transport 层完成规范化，待合入部署后复验完整 SSO。
 
 ## Decisions / Discussion
 
@@ -24,10 +24,10 @@
 
 ## Verification / Test
 
-- provider 与 llmlint typecheck 通过；provider 聚焦 OAuth 集成测试原有 5 项全通过，本修复将完整 S256 批准用例改为表单体并增加非法/重复表单拒绝覆盖，5 项仍全通过。
-- DMIT 生产 `GET https://llmlint.notnotype.com/api/health` 返回 `{"status":"ok","service":"llmlint-web","database":"ok"}`；443 SNI 与 31445 直连门禁已验收。
-- 真实失败证据：官方 `POST /api/v1/oauth/authorize` 多次返回 302，生产 `OAuthAuthorizationCode=17`、`OAuthAccessToken=0`，llmlint access log 没有 `/auth/neurobook` callback 请求。
-- 本修复已通过官方 `bun run typecheck`、`bun run build` 与 `bunx vitest run tests/oauth-client.integration.test.ts`（5 tests passed）；生产重新部署和真实公网 SSO 回调仍待完成。
+- consent navigation 修复已通过官方 `bun run typecheck`、`bun run build` 和 167 项全量测试，并部署镜像 `ghcr.io/notnotype/neuro-book-site@sha256:2a3029c938a2c995fc28839602d0c3100a9c7de67d965382d69d3aada19ee761`；冷快照为 `/srv/neuro-book-site/ops/deployments/20260815T032801Z/data.before.tar`。
+- 部署后真实浏览器已从授权页到达 `https://llmlint.notnotype.com/auth/neurobook`；provider 同时记录 `POST /api/v1/oauth/token` 401，证明 consent 跳转问题已消除、失败点后移到 client 认证。
+- 两侧 secret 已在 DMIT 内安全比对：llmlint 运行进程、secret 文件与 provider scrypt 摘要一致；原始 Basic 探针通过 client 认证并返回预期 `invalid_grant`，标准表单编码 Basic 则复现 401。实际 secret 有 4 个字符需要百分号编码，未输出 secret 本身。
+- Basic 兼容修复的聚焦测试先以 token 401 失败，修复后 `bunx vitest run tests/oauth-client.integration.test.ts` 5 项通过；测试 secret 固定含保留字符，并覆盖非法 `%ZZ` 表单转义拒绝。`bun run typecheck`、`bun run build` 与 `bun run test`（167 tests passed）通过。
 - 双轴盲评尚未回收；生产 `DocJudgment=0`，需先完成真实 SSO 闭环。
 
 ## Implementation Walkthrough
@@ -38,9 +38,10 @@
 4. llmlint 删除密码登录、注册和 admin seed；新增 PKCE pending session、callback、官方用户映射和生产 fail-closed 配置。
 5. 更新部署文档、环境模板、PROJECT-STATUS 与 Task 06 walkthrough，记录实际部署边界和验证证据。
 6. OAuth consent page 改用浏览器顶层表单导航提交；批准端点保留精确 Origin、query 和 PKCE 校验，同时严格接受 JSON 或 `application/x-www-form-urlencoded` 的唯一 `allowed` 字段。
+7. token transport 按 RFC 6749 §2.3.1 解码 Basic 中分别做过 `application/x-www-form-urlencoded` 编码的 client ID 与 secret，再把规范化 header 交给固定版本 OAuth library；不轮换或输出现有 secret。
 
 ## TODO / Follow-ups
 
-- 合入并部署本次 OAuth consent navigation 修复，随后用真实浏览器完成授权批准、llmlint callback、本地用户映射和管理员权限验收。
-- 更新 llmlint Task 06 walkthrough，记录生产故障根因、修复版本和闭环证据。
+- 合入并部署 client_secret_basic 解码修复，随后用真实浏览器完成授权批准、token/userinfo、llmlint 本地用户映射和管理员权限验收。
+- 更新 llmlint Task 06 walkthrough，记录两段生产故障根因、修复版本和闭环证据。
 - 在正式 origin 上回收 20 份双轴盲评并运行跨题材集成分析。

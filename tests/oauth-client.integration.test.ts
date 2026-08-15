@@ -12,7 +12,7 @@ const dbPath = join(runDir, "oauth.db").replaceAll("\\", "/");
 const port = 35200 + (process.pid % 300);
 const baseUrl = `http://127.0.0.1:${port}`;
 const adminPassword = "admin1234567890-test";
-const clientSecret = "oauth-client-secret-012345678901234567890";
+const clientSecret = "oauth-client-secret-0123456789!$&'()";
 
 let server: ChildProcess | null = null;
 
@@ -84,8 +84,13 @@ function authorizeQuery(verifier: string, state = "state-integration-1"): string
     return `?${query}`;
 }
 
+function formUrlEncode(value: string): string {
+    return new URLSearchParams({value}).toString().slice("value=".length);
+}
+
 function basicHeader(): string {
-    return `Basic ${Buffer.from(`llmlint-web:${clientSecret}`).toString("base64")}`;
+    const credentials = `${formUrlEncode("llmlint-web")}:${formUrlEncode(clientSecret)}`;
+    return `Basic ${Buffer.from(credentials).toString("base64")}`;
 }
 
 async function json<T>(response: Response): Promise<T> {
@@ -310,6 +315,18 @@ describe("官方 OAuth provider", () => {
         expect(noBasic.status).toBe(401);
         expect(noBasic.headers.get("www-authenticate")).toBe('Basic realm="oauth"');
         expect((await noBasic.json() as {error: string}).error).toBe("invalid_client");
+
+        const malformedBasic = await request("/api/v1/oauth/token", {
+            method: "POST",
+            headers: {
+                Authorization: `Basic ${Buffer.from("llmlint-web:%ZZ").toString("base64")}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({grant_type: "authorization_code"}),
+        });
+        expect(malformedBasic.status).toBe(401);
+        expect(malformedBasic.headers.get("www-authenticate")).toBe('Basic realm="oauth"');
+        expect((await malformedBasic.json() as {error: string}).error).toBe("invalid_client");
 
         const refresh = await request("/api/v1/oauth/token", {
             method: "POST",
